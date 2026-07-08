@@ -1,0 +1,98 @@
+# ============================================================
+# 后门/木马/恶意软件特征库
+# ============================================================
+
+# --- 常见后门端口通信 ---
+- id: BACKDOOR-001
+  name: "Backdoor - SubSeven Trojan"
+  category: backdoor
+  severity: critical
+  ports: [27374, 1243, 6711, 6776]
+  patterns:
+    - "subseven"
+
+- id: BACKDOOR-002
+  name: "Backdoor - NetBus Trojan"
+  category: backdoor
+  severity: critical
+  ports: [12345, 12346, 20034]
+  patterns:
+    - "NetBus"
+
+- id: BACKDOOR-003
+  name: "Backdoor - Back Orifice"
+  category: backdoor
+  severity: critical
+  ports: [31337, 54320, 54321]
+  patterns:
+    - "BO2K"
+
+# --- Shell 连接特征 ---
+- id: BACKDOOR-004
+  name: "Backdoor - Reverse Shell Command"
+  category: backdoor
+  severity: critical
+  patterns:
+    - "(?i)(bash|sh|nc|ncat|netcat)\\s+.*>/dev/tcp/"
+    - "(?i)python\\s+-c\\s+['\"]import\\s+(socket|os|pty|subprocess)"
+    - "(?i)exec\\s+[0-9]+<>/dev/tcp/"
+    - "(?i)(bash|sh)\\s+-i\\s+>&"
+
+# --- C2 通信特征 ---
+- id: BACKDOOR-005
+  name: "Backdoor - Cobalt Strike Beacon"
+  category: backdoor
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)Mozilla/4\\.0 \\(compatible; MSIE 6\\.0; Windows NT 5\\.1\\)"
+    - "(?i)Mozilla/5\\.0 \\(compatible; MSIE 9\\.0; Windows NT 6\\.1; Trident/5\\.0\\)"
+
+- id: BACKDOOR-006
+  name: "Backdoor - Meterpreter Reverse Shell"
+  category: backdoor
+  severity: critical
+  patterns:
+    - "(?i)metsrv"
+    - "(?i)meterpreter"
+    - "(?i)stdapi"
+
+# --- 恶意User-Agent ---
+- id: BACKDOOR-007
+  name: "Backdoor - Malicious User-Agent"
+  category: backdoor
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)zgrab"
+    - "(?i)masscan"
+    - "(?i)Nikto"
+    - "(?i)Go-http-client"
+    - "(?i)python-requests.*(sqlmap|scrapy)"
+
+# --- 挖矿木马 ---
+- id: BACKDOOR-008
+  name: "Backdoor - Cryptominer Detection"
+  category: backdoor
+  severity: critical
+  patterns:
+    - "(?i)stratum\\+tcp://"
+    - "(?i)xmr-stak"
+    - "(?i)minerd"
+    - "(?i)cpuminer"
+    - "(?i)cryptonight"
+    - "(?i)XMRig"
+
+# --- DNS 隧道 ---
+- id: BACKDOOR-009
+  name: "Backdoor - DNS Tunneling"
+  category: backdoor
+  severity: high
+  protocols: [DNS]
+  ports: [53]
+  patterns:
+    - "(?i)\\.tunnel\\."
+    - "(?i)dnscat2"
+    - "(?i)iodine"

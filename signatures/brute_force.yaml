@@ -1,0 +1,96 @@
+# ============================================================
+# 暴力破解与认证攻击特征库
+# ============================================================
+
+# --- SSH 暴力破解 ---
+- id: BRUTE-001
+  name: "SSH Brute Force - Failed Password"
+  category: brute_force
+  severity: high
+  protocols: [SSH]
+  ports: [22]
+  threshold:
+    count: 5
+    window: 60
+  patterns:
+    - "Failed password"
+    - "Authentication failed"
+    - "Permission denied (publickey"
+    - "Too many authentication failures"
+
+# --- FTP 暴力破解 ---
+- id: BRUTE-002
+  name: "FTP Brute Force - Login Incorrect"
+  category: brute_force
+  severity: high
+  protocols: [FTP]
+  ports: [21]
+  threshold:
+    count: 5
+    window: 60
+  patterns:
+    - "530 Login incorrect"
+    - "530 User"
+    - "530 Not logged in"
+    - "Login authentication failed"
+
+# --- HTTP 登录暴力破解 ---
+- id: BRUTE-003
+  name: "HTTP Brute Force - 401/403 Flood"
+  category: brute_force
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  threshold:
+    count: 10
+    window: 60
+  patterns:
+    - "401 Unauthorized"
+    - "403 Forbidden"
+    - "login failed"
+    - "Invalid username or password"
+    - "incorrect password"
+
+# --- RDP 暴力破解 ---
+- id: BRUTE-004
+  name: "RDP Brute Force Detection"
+  category: brute_force
+  severity: high
+  protocols: [UNKNOWN]
+  ports: [3389]
+  threshold:
+    count: 5
+    window: 120
+  patterns:
+    - "logon failure"
+
+# --- Telnet 暴力破解 ---
+- id: BRUTE-005
+  name: "Telnet Brute Force"
+  category: brute_force
+  severity: high
+  protocols: [TELNET]
+  ports: [23]
+  threshold:
+    count: 5
+    window: 60
+  patterns:
+    - "Login incorrect"
+    - "Login failed"
+    - "Invalid login"
+    - "Authentication failed"
+
+# --- 通用认证失败特征 ---
+- id: BRUTE-006
+  name: "Generic Authentication Failure"
+  category: brute_force
+  severity: medium
+  threshold:
+    count: 10
+    window: 120
+  patterns:
+    - "access denied"
+    - "authentication failure"
+    - "invalid user"
+    - "user unknown"
+    - "bad password"

@@ -1,0 +1,117 @@
+# ============================================================
+# SQL 注入攻击特征库
+# ============================================================
+
+# --- 基础 SQL 注入 ---
+- id: SQLI-001
+  name: "SQL Injection - UNION SELECT"
+  category: sql_injection
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)union\\s+(all\\s+)?select\\s+"
+    - "(?i)union\\s+(all\\s+)?select.*from"
+    - "(?i)\\bselect\\b.*\\bfrom\\b.*\\bwhere\\b"
+    - "(?i)\\bselect\\b.*\\bfrom\\b.*information_schema"
+
+- id: SQLI-002
+  name: "SQL Injection - Tautology (1=1)"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)(['\"\\)])\\s*or\\s+['\"]?1['\"]?\\s*=\\s*['\"]?1"
+    - "(?i)(['\"\\)])\\s*or\\s+['\"]?a['\"]?\\s*=\\s*['\"]?a"
+    - "(?i)(['\"\\)])\\s*or\\s+true\\s*--"
+    - "(?i)%27\\s*or\\s*1\\s*=\\s*1"
+
+- id: SQLI-003
+  name: "SQL Injection - Comment Bypass"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)--\\s"
+    - "(?i)#\\s*$"
+    - "(?i)/\\*!.*?\\*/"
+    - "(?i);\\s*(DROP|DELETE|UPDATE|INSERT)\\s+"
+
+- id: SQLI-004
+  name: "SQL Injection - DROP/DELETE/UPDATE"
+  category: sql_injection
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\bdrop\\s+table\\b"
+    - "(?i)\\bdelete\\s+from\\b"
+    - "(?i)\\bupdate\\b.*\\bset\\b"
+    - "(?i)\\btruncate\\s+table\\b"
+    - "(?i)\\bexec\\s+(sp_|xp_)"
+
+- id: SQLI-005
+  name: "SQL Injection - Information Schema Probe"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)information_schema\\.(tables|columns|schemata)"
+    - "(?i)table_name\\s+from\\s+information_schema"
+    - "(?i)column_name\\s+from\\s+information_schema"
+
+- id: SQLI-006
+  name: "SQL Injection - Hex Encoding Bypass"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)0x[0-9a-fA-F]{6,}"
+    - "(?i)char\\([0-9,\\s]+\\)"
+    - "(?i)unhex\\(['\"][0-9a-fA-F]+['\"]\\)"
+
+- id: SQLI-007
+  name: "SQL Injection - Blind/Time-based"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\b(sleep|benchmark|pg_sleep)\\s*\\("
+    - "(?i)waitfor\\s+delay\\s+['\"]0:0:[0-9]+"
+    - "(?i)\\bif\\s*\\(.*sleep\\s*\\("
+    - "(?i)CASE\\s+WHEN.*THEN"
+
+- id: SQLI-008
+  name: "SQL Injection - Stacked Queries"
+  category: sql_injection
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i);\\s*(select|insert|update|delete|drop|exec|shutdown)"
+
+- id: SQLI-009
+  name: "SQL Injection - Load File/Into Outfile"
+  category: sql_injection
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\bload_file\\s*\\("
+    - "(?i)\\binto\\s+(out|dump)file\\s+"
+    - "(?i)load\\s+data\\s+local\\s+infile"
+
+- id: SQLI-010
+  name: "SQL Injection - SQLMap User-Agent"
+  category: sql_injection
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)sqlmap/[0-9.]+"
+    - "(?i)sqlmap.*\\(http://sqlmap\\.org\\)"

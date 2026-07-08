@@ -1,0 +1,63 @@
+# ============================================================
+# .gitignore — 常见网络攻击检测系统 (NADS)
+# ============================================================
+
+# --- 敏感/大型资料目录 ---
+reference/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# --- 虚拟环境 ---
+venv/
+.venv/
+env/
+.env
+*.conda/
+
+# --- 运行时文件 ---
+logs/
+*.log
+alerts.json
+*.pcap
+*.pcapng
+
+# --- 基线文件（二进制，每个人本地生成）---
+baseline.json
+*.pkl
+*.joblib
+
+# --- IDE & OS ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- 临时文件 ---
+temp_pdf_text/
+.history/
+*.tmp
+*.bak
+
+# --- Jupyter Notebook ---
+.ipynb_checkpoints/
+*.ipynb
+
+# --- 打包产物 ---
+*.exe
+*.msi
+*.deb
+*.rpm

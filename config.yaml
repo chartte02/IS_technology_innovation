@@ -1,0 +1,84 @@
+# ============================================================
+# 常见网络攻击检测系统 — 全局配置文件
+# 所有模块的配置项统一管理在此文件中
+# ============================================================
+
+# --- 系统配置 ---
+system:
+  name: "Network Attack Detection System (NADS)"
+  version: "1.0.0"
+  log_level: "INFO"           # DEBUG | INFO | WARNING | ERROR
+  log_dir: "./logs"
+  log_file: "ids.log"
+
+# --- 网络抓包配置 ---
+capture:
+  interface: null              # 网卡接口名，null 表示自动选择（Windows: 需手动指定）
+  # Windows 示例: "\\Device\\NPF_{GUID}" 或使用 scapy 的 iface 参数
+  # Linux 示例: "eth0"
+  promiscuous: true            # 混杂模式
+  snaplen: 65535               # 最大抓包长度（字节）
+  timeout: 1000                # 超时时间（毫秒）
+  buffer_size: 104857600       # 环形缓冲区大小（100MB）
+  filter_rule: "tcp"           # BPF 过滤规则：tcp / ip / tcp port 80 / etc.
+  # 高级过滤示例: "tcp and (port 80 or port 443 or port 22 or port 21)"
+
+# --- 特征库配置 ---
+signatures:
+  directory: "./signatures"    # 特征库文件目录
+  enable_regex: true           # 启用正则表达式匹配
+  enable_aho_corasick: true    # 启用 AC 自动机加速
+  case_sensitive: false        # 是否区分大小写（默认不区分）
+
+# --- 异常检测配置 ---
+anomaly:
+  # 滑动窗口参数
+  time_window: 60              # 统计窗口（秒）
+  bucket_size: 5               # 时间桶粒度（秒）
+
+  # 端口扫描检测阈值
+  port_scan:
+    unique_ports_threshold: 20      # 60秒内访问超过此端口数 → 端口扫描
+  horizontal_scan:
+    unique_ips_threshold: 50        # 60秒内访问超过此IP数 → 横向扫描
+  brute_force:
+    login_fail_threshold: 5         # 60秒内登录失败次数 → 暴力破解
+  syn_flood:
+    syn_threshold: 1000             # SYN包数阈值
+    syn_ratio: 0.8                  # SYN占比阈值（80%）
+  ddos:
+    pps_threshold: 10000            # 每秒包数阈值
+
+  # 基线学习参数
+  baseline_learning_period: 3600    # 基线学习时长（秒），建议至少1小时
+  baseline_update_interval: 300     # 基线更新间隔（秒）
+
+# --- 告警配置 ---
+alert:
+  enable_console_output: true      # 控制台实时输出
+  enable_file_log: true            # 文件日志
+  enable_json_export: true         # JSON 导出
+  json_export_file: "./alerts.json"
+  dedup_window: 10                 # 告警去重窗口（秒）
+  max_alerts_in_memory: 10000      # 内存中最大告警数
+
+# --- TCP 流重组配置 ---
+tcp_reassembly:
+  enabled: true                    # 是否启用流重组
+  stream_timeout: 300              # 流超时（秒）
+  max_stream_size: 10485760        # 单流最大缓存（10MB）
+  max_concurrent_streams: 1000     # 最大并发流数
+
+# --- GUI 配置 ---
+gui:
+  theme: "dark"                    # dark | light
+  refresh_interval: 1000           # 界面刷新间隔（毫秒）
+  max_display_alerts: 500          # 界面最大显示告警数
+  chart_points: 60                 # 实时图表数据点数
+
+# --- 威胁情报集成（扩展功能）---
+threat_intel:
+  enabled: false                   # 是否启用
+  abuseipdb_api_key: ""            # AbuseIPDB API Key
+  alienvault_otx_api_key: ""       # AlienVault OTX API Key
+  local_blacklist: "./blacklist.txt"

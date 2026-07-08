@@ -1,0 +1,88 @@
+# ============================================================
+# 扫描探测特征库
+# ============================================================
+
+# --- 端口扫描特征 ---
+- id: SCAN-001
+  name: "Port Scan - Nmap SYN Scan"
+  category: scan
+  severity: medium
+  patterns:
+    - "(?i)nmap"
+    - "(?i)Nmap Scripting Engine"
+
+- id: SCAN-002
+  name: "Port Scan - Masscan Detection"
+  category: scan
+  severity: medium
+  patterns:
+    - "(?i)masscan"
+
+# --- 漏洞扫描器 ---
+- id: SCAN-003
+  name: "Vulnerability Scanner - Nikto"
+  category: scan
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)Nikto"
+    - "(?i)nikto/[0-9.]+"
+
+- id: SCAN-004
+  name: "Vulnerability Scanner - Nessus"
+  category: scan
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)Nessus"
+    - "(?i)nessus/[0-9.]+"
+
+- id: SCAN-005
+  name: "Vulnerability Scanner - OpenVAS"
+  category: scan
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)OpenVAS"
+
+- id: SCAN-006
+  name: "Vulnerability Scanner - Acunetix"
+  category: scan
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)acunetix"
+    - "(?i)Acunetix-"
+
+- id: SCAN-007
+  name: "Vulnerability Scanner - Burp Suite"
+  category: scan
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)burp"
+    - "(?i)Burp Suite"
+
+# --- 敏感路径探测 ---
+- id: SCAN-008
+  name: "Scan - Sensitive Path Probing"
+  category: scan
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)/phpmyadmin"
+    - "(?i)/phpMyAdmin"
+    - "(?i)/wp-admin"
+    - "(?i)/wp-login"
+    - "(?i)/administrator"
+    - "(?i)/manager/html"
+    - "(?i)/solr/admin"
+    - "(?i)/actuator"
+    - "(?i)/swagger"
+    - "(?i)/api-docs"

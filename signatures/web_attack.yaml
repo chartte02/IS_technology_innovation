@@ -1,0 +1,137 @@
+# ============================================================
+# Web 攻击特征库（目录遍历、命令注入、文件包含等）
+# ============================================================
+
+# --- 目录遍历 ---
+- id: WEB-001
+  name: "Web Attack - Directory Traversal"
+  category: web_attack
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\.\\.(\\\\|/)\\.\\."
+    - "(?i)%2e%2e%2f"
+    - "(?i)%2e%2e/"
+    - "(?i)\\.\\.%2f"
+    - "(?i)%252e%252e%252f"
+
+# --- 敏感文件访问 ---
+- id: WEB-002
+  name: "Web Attack - Sensitive File Access"
+  category: web_attack
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)/etc/(passwd|shadow|group|hosts)"
+    - "(?i)/proc/self/environ"
+    - "(?i)c:\\\\windows\\\\system32"
+    - "(?i)c:\\\\boot\\.ini"
+    - "(?i)/WEB-INF/(web\\.xml|classes/)"
+    - "(?i)\\.\\./WEB-INF/"
+    - "(?i)/\\.git/"
+    - "(?i)/\\.svn/"
+    - "(?i)/\\.env$"
+    - "(?i)/\\.htaccess"
+
+# --- 命令注入/RCE ---
+- id: WEB-003
+  name: "Web Attack - Command Injection (RCE)"
+  category: web_attack
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\|\\s*(nc|wget|curl|bash|sh|perl|python|ruby|php)"
+    - "(?i);\\s*(nc|wget|curl|bash|sh|id|whoami|uname|ls|cat)"
+    - "(?i)\\b(eval|exec|system|passthru|shell_exec|popen|proc_open)\\s*\\("
+    - "(?i)\\bcmd\\.exe\\b"
+    - "(?i)\\bpowershell\\.exe\\b"
+    - "(?i)\\b/bin/(bash|sh|cat|ls|id|whoami|nc|curl|wget)"
+
+# --- PHP 代码执行 ---
+- id: WEB-004
+  name: "Web Attack - PHP Code Execution"
+  category: web_attack
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)<\\?php"
+    - "(?i)\\$\\(get|post|request|server|cookie|session\\)"
+    - "(?i)preg_replace\\s*\\([^)]*/e[^)]*\\)"
+    - "(?i)assert\\s*\\([^)]*\\$\\)"
+    - "(?i)create_function\\s*\\("
+    - "(?i)base64_decode\\s*\\([^)]*\\$[^)]*\\)"
+
+# --- 文件包含 (LFI/RFI) ---
+- id: WEB-005
+  name: "Web Attack - File Inclusion (LFI/RFI)"
+  category: web_attack
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)(include|require|include_once|require_once)\\s*\\([^)]*\\$"
+    - "(?i)(include|require)\\s*\\([^)]*http://"
+    - "(?i)(include|require)\\s*\\([^)]*ftp://"
+    - "(?i)(include|require)\\s*\\([^)]*php://"
+    - "(?i)(include|require)\\s*\\([^)]*data://"
+    - "(?i)(include|require)\\s*\\([^)]*expect://"
+
+# --- Shell 特征 ---
+- id: WEB-006
+  name: "Web Attack - Web Shell Detection"
+  category: web_attack
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)c99shell"
+    - "(?i)r57shell"
+    - "(?i)b374k"
+    - "(?i)WSO\\s*Shell"
+    - "(?i)weevely"
+    - "(?i)/cmd\\.php"
+    - "(?i)/shell\\.php"
+    - "(?i)/uploader\\.php"
+    - "(?i)/adminer\\.php"
+
+# --- SSRF ---
+- id: WEB-007
+  name: "Web Attack - SSRF (Server Side Request Forgery)"
+  category: web_attack
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)url=http://(localhost|127\\.0\\.0\\.1|10\\.|172\\.|192\\.168\\.)"
+    - "(?i)url=http://169\\.254\\.169\\.254"
+    - "(?i)url=file://"
+    - "(?i)url=gopher://"
+
+# --- XXE ---
+- id: WEB-008
+  name: "Web Attack - XXE (XML External Entity)"
+  category: web_attack
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)<!ENTITY\\s+\\w+\\s+SYSTEM\\s+['\"]"
+    - "(?i)<!DOCTYPE.*\\[.*<!ENTITY"
+    - "(?i)<!ENTITY\\s+\\w+\\s+SYSTEM\\s+['\"]file://"
+
+# --- SSTI ---
+- id: WEB-009
+  name: "Web Attack - SSTI (Server Side Template Injection)"
+  category: web_attack
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\{\\{[^}]*\\}\\}"
+    - "(?i)\\{\\{[^}]*__class__"
+    - "(?i)\\$\\{7\\*7\\}"
+    - "(?i)<%=.*%>"

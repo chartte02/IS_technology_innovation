@@ -1,0 +1,62 @@
+# ============================================================
+# DoS/DDoS 攻击特征库
+# ============================================================
+
+# --- SYN Flood ---
+- id: DOS-001
+  name: "DoS - SYN Flood Attack"
+  category: dos
+  severity: critical
+  patterns:
+    - "(?i)SYN flood"
+
+# --- Slowloris ---
+- id: DOS-002
+  name: "DoS - Slowloris Attack"
+  category: dos
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)X-a: b\\r\\n"
+
+# --- HTTP Flood ---
+- id: DOS-003
+  name: "DoS - HTTP Flood (HULK/HOIC/LOIC)"
+  category: dos
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)HOIC"
+    - "(?i)LOIC"
+    - "(?i)hulk"
+
+# --- ICMP Flood ---
+- id: DOS-004
+  name: "DoS - ICMP Flood"
+  category: dos
+  severity: critical
+  patterns:
+    - "(?i)ICMP flood"
+
+# --- DNS Amplification ---
+- id: DOS-005
+  name: "DoS - DNS Amplification Attack"
+  category: dos
+  severity: critical
+  protocols: [DNS]
+  ports: [53]
+  patterns:
+    - "(?i)ANY\\?.*dns"
+    - "(?i)dns amplification"
+
+# --- Slow Read ---
+- id: DOS-006
+  name: "DoS - Slow Read Attack"
+  category: dos
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)Range:\\s*bytes=0-[0-9]{1,2}\\r\\n"

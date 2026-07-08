@@ -1,0 +1,114 @@
+# ============================================================
+# XSS 跨站脚本攻击特征库
+# ============================================================
+
+- id: XSS-001
+  name: "XSS - Script Tag Injection"
+  category: xss
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)<script[^>]*>.*?</script>"
+    - "(?i)<script[^>]*src\\s*="
+    - "(?i)</script[^>]*>"
+
+- id: XSS-002
+  name: "XSS - JavaScript Protocol Handler"
+  category: xss
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)javascript\\s*:"
+    - "(?i)vbscript\\s*:"
+    - "(?i)data\\s*:"
+
+- id: XSS-003
+  name: "XSS - Event Handler Injection"
+  category: xss
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)on(load|click|error|mouseover|focus|blur|submit|change|keyup|keydown|keypress|scroll|resize|abort|unload)\\s*="
+    - "(?i)on(selectstart|drag|drop|contextmenu|dblclick|input|invalid)\\s*="
+
+- id: XSS-004
+  name: "XSS - IMG Tag Onerror"
+  category: xss
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)<img[^>]*onerror\\s*="
+    - "(?i)<img[^>]*src\\s*=\\s*['\"]?[^>]*onerror"
+    - "(?i)<svg[^>]*onload\\s*="
+
+- id: XSS-005
+  name: "XSS - Alert/Confirm/Prompt Injection"
+  category: xss
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\balert\\s*\\([^)]*\\)"
+    - "(?i)\\bconfirm\\s*\\([^)]*\\)"
+    - "(?i)\\bprompt\\s*\\([^)]*\\)"
+    - "(?i)\\bdocument\\.cookie\\b"
+
+- id: XSS-006
+  name: "XSS - Iframe Injection"
+  category: xss
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)<iframe[^>]*>"
+    - "(?i)<frame[^>]*src\\s*="
+
+- id: XSS-007
+  name: "XSS - Encoded Characters"
+  category: xss
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)%3Cscript%3E"
+    - "(?i)%3C%2Fscript%3E"
+    - "(?i)%3Cimg[^%]*%3E"
+    - "(?i)&#x3C;script&#x3E;"
+    - "(?i)&#60;script&#62;"
+
+- id: XSS-008
+  name: "XSS - CSS Expression Injection"
+  category: xss
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)expression\\s*\\([^)]*\\)"
+    - "(?i)-moz-binding\\s*:"
+    - "(?i)behavior\\s*:"
+
+- id: XSS-009
+  name: "XSS - SVG-based Injection"
+  category: xss
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)<svg[^>]*>"
+    - "(?i)<animate[^>]*onbegin"
+    - "(?i)<set[^>]*onbegin"
+
+- id: XSS-010
+  name: "XSS - Object/Embed Tag"
+  category: xss
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)<object[^>]*data\\s*="
+    - "(?i)<embed[^>]*src\\s*="
+    - "(?i)<param[^>]*value\\s*=\\s*['\"]?javascript:"
