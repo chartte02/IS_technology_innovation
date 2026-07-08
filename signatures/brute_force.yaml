@@ -15,7 +15,7 @@
   patterns:
     - "Failed password"
     - "Authentication failed"
-    - "Permission denied (publickey"
+    - "Permission denied \\(publickey"
     - "Too many authentication failures"
 
 # --- FTP 暴力破解 ---

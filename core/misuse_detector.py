@@ -182,7 +182,18 @@ class SignatureMatcher:
 
         if is_regex:
             # 处理内联标志
-            compiled = re.compile(pattern, re.IGNORECASE if '(?i)' in pattern else 0)
+            try:
+                compiled = re.compile(
+                    pattern,
+                    re.IGNORECASE if '(?i)' in pattern else 0
+                )
+            except re.error:
+                # 正则编译失败（如括号未闭合），降级为纯字符串匹配
+                logger.warning(
+                    f"Invalid regex pattern, falling back to literal: {pattern[:60]}"
+                )
+                is_regex = False
+                compiled = pattern.lower()
         else:
             # 纯字符串，转小写用于大小写不敏感匹配
             compiled = pattern.lower()
