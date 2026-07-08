@@ -313,17 +313,22 @@ class AlertManager:
 
     def _print_alert(self, alert: Alert):
         """格式化输出告警到控制台"""
-        severity_emoji = {
-            'critical': '🔴',
-            'high': '🟠',
-            'medium': '🟡',
-            'low': '🔵',
-            'info': '⚪',
+        severity_mark = {
+            'critical': '[CRIT]',
+            'high':     '[HIGH]',
+            'medium':   '[MED ]',
+            'low':      '[LOW ]',
+            'info':     '[INFO]',
         }
-        emoji = severity_emoji.get(alert.severity, '❓')
-        direction = f"{alert.src_ip}:{alert.src_port} → {alert.dst_ip}:{alert.dst_port}"
-        print(f"{emoji} [{alert.severity.upper()}] [{alert.category}] "
-              f"{alert.signature_name or alert.description} | {direction}")
+        mark = severity_mark.get(alert.severity, '[????]')
+        direction = f"{alert.src_ip}:{alert.src_port} -> {alert.dst_ip}:{alert.dst_port}"
+        try:
+            print(f"{mark} [{alert.category}] "
+                  f"{alert.signature_name or alert.description} | {direction}")
+        except UnicodeEncodeError:
+            # Windows cp1252 fallback: strip non-ASCII chars
+            msg = f"{mark} [{alert.category}] {direction}"
+            print(msg.encode('ascii', errors='replace').decode('ascii'))
 
     def _export_json(self, alert: Alert):
         """追加导出到 JSON 文件"""

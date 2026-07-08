@@ -30,6 +30,8 @@ logs/
 alerts.json
 *.pcap
 *.pcapng
+!tests/test_pcaps/*.pcap
+!tests/test_pcaps/*.cap
 
 # --- 基线文件（二进制，每个人本地生成）---
 baseline.json
@@ -40,6 +42,10 @@ baseline.json
 .idea/
 .vscode/
 *.swp
+.playwright-mcp/
+
+# --- Dev journal screenshots (binary, large) ---
+docs/dev-journals/*.png
 *.swo
 *~
 .DS_Store

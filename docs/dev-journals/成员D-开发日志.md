@@ -6,52 +6,68 @@
 
 ---
 
-## Day 1 — 2026-07-08 (环境搭建 + GUI 原型验证)
+## Day 1 — 2026-07-08 (环境搭建 + GUI 基础修复 + 测试)
 
 ### 1. 今日进度
 
-- [ ] 安装 PyQt5 + PyQtChart，验证 `from PyQt5.QtWidgets import QApplication` 可用
-- [ ] 打开 GUI 空白窗口，确认不报错
-- [ ] 测试 `alert_manager.py` 的独立功能（提交告警、去重、统计、JSON 导出）
-- [ ] 确认 GUI 中 5 个 Tab 页的占位符位置，标注哪些需要替换为真实图表
+- [x] 搭建 Python 3.13.5 venv 环境，安装全部依赖（scapy, pyqt5, pyqtchart, pyahocorasick, sklearn 等）
+- [x] GUI 窗口正常打开/关闭，确认 PyQt5 5.15.11 + PyQtChart 5.15.7 可用
+- [x] `alert_manager.py` 独立测试全部通过（提交/去重/统计/JSON 导出/误报标记）
+- [x] 修复 GUI 4 个 bug（emoji 崩溃、统计卡片引用、特征库按钮回调、**AC 自动机大小写 bug**）
+- [x] 重写 `tests/test_signature_match.py`（全英文避免编码问题）
+- [x] 测试准确率：**17/17 = 100%**（SQL注入/XSS/Web攻击/暴力破解 全部通过）
 
 ### 2. 遇到的问题与解决
 
 | 问题 | 原因 | 解决方案 |
 |------|------|----------|
-| （示例）PyQtChart 安装失败 | pip 源中没有 pyqtchart | 改用 `pip install PyQt5-Chart` 或 conda 安装 |
-| （示例）GUI 窗口打开后闪退 | `_on_start_stop` 回调触发了 `self.engine.start()` 但 engine 为 None | 给所有引擎操作加 `if self.engine is None: return` |
-| | | |
+| emoji 导致 Windows cp1252 崩溃 (`_print_alert`) | colorama 将 emoji 写入 cp1252 编码的终端时失败 | 改用纯 ASCII 标记 `[CRIT]/[HIGH]/[MED]/[LOW]`，包裹 try/except |
+| GUI 统计卡片 `findChild(QLabel)` 返回 GroupBox 的标题 label 而非数值 label | QGroupBox 标题也是 QLabel，`findChild` 返回第一个 | 在 `_make_stat_card` 中保存 `gb._value_label` 引用，新增 `_set_card_value` 方法精确更新 |
+| 特征库管理 Tab 「查看」和「重载」按钮无回调 | 代码中只声明了按钮但未 `.clicked.connect()` | 新增 `_on_view_signature()` 和 `_on_reload_signatures()` 两个回调 |
+| **成员A模块的 AC 自动机 bug**：暴力破解检测准确率 33% | `_build_indices` 直接用原始大小写 pattern 入 AC 自动机，但 `_match_ac` 用 `payload.lower()` 搜索 → 大小写不匹配 | 改为 `pattern.lower()` 入 AC 自动机，key 用 tuple 直接索引而非 `id()` → 暴力破解准确率 33%→100% |
+| 测试文件在目录重构中丢失（`ids_detection_system/tests/` 层未随搬移） | 目录重构时文件未完全移动 | 重建 `tests/test_signature_match.py`，改为全英文 + 更完整的测试用例 |
 
 ### 3. Agent 协作记录
 
 | 任务 | 是否用 Agent | 效果评估 |
 |------|-------------|----------|
-| | | |
+| 定位 emoji 崩溃的具体位置和原因 | ✅ | 2 分钟定位到 `_print_alert` 第 316 行 |
+| 发现 AC 自动机大小写 bug | ✅ | 帮我写了 debug 脚本对比 `payload_lower` 和 AC 模式存储的内容，迅速定位根因 |
+| 重写测试脚本 | ✅ | 从旧格式改为带详细输出的新格式，一次通过 |
+| 环境搭建（pip install + 验证） | ✅ | 批量安装 15 个包，自动处理了 PyQtChart 包名不对的坑 |
 
 ### 4. 技术决策
 
 | 决策 | 选项 A | 选项 B | 选择 | 理由 |
 |------|--------|--------|------|------|
-| （示例）图表库 | PyQtChart | matplotlib 嵌入 | PyQtChart | 原生 Qt 组件，与 PyQt5 无缝集成 |
-| （示例）主题 | 暗色主题 | 亮色主题 | 暗色 | 安全工具惯例，视觉更专业 |
-| | | | | |
+| 统计卡片更新方式 | `findChild(QLabel)` | `gb._value_label` 保存引用 | 引用 | `findChild` 不稳定，QGroupBox 的标题也是 QLabel |
+| 图表库 | PyQtChart | matplotlib 嵌入 | PyQtChart | 原生 Qt 组件，与 PyQt5 无缝集成 |
+| 终端输出编码 | emoji + Unicode | 纯 ASCII | 纯 ASCII | Windows 兼容性优先，emoji 只在 GUI 中用 |
+| 测试脚本语言 | 中文注释 | 全英文 | 全英文 | 避免 Windows cp1252 编码问题 |
 
 ### 5. 性能/测试数据
 
 | 测试项 | 结果 | 备注 |
 |--------|------|------|
-| GUI 窗口打开 | ✅/❌ | |
-| 告警去重逻辑 | ✅/❌ | 重复告警应被过滤 |
-| JSON 导出文件 | ✅/❌ | alerts.json 存在且格式正确 |
+| GUI 窗口打开 | ✅ | PyQt5 5.15.11, 暗色主题正常 |
+| 告警去重逻辑 | ✅ | 同 signature_id+src_ip+dst_ip 正确去重 |
+| JSON 导出文件 | ✅ | alerts.json 存在，格式正确 |
+| 误报标记 | ✅ | acknowledge + mark_false_positive 正常 |
+| **特征匹配总准确率** | **100% (17/17)** | SQLi 6/6, XSS 4/4, Web 4/4, BruteForce 3/3 |
+| 特征库规则数 | 58 条 | 7 个 YAML 文件 |
 
 ### 6. 参考项目借鉴
 
 | 参考项目 | 借鉴内容 | 落地情况 |
 |----------|----------|----------|
-| | | |
+| （Day 2-3 计划）NetPortMon | PyQtChart 实时图表实现 | 待开始 |
 
-### 7. 明日计划
+### 7. 明日计划 (Day 2)
+
+- [ ] 🔴 PDF必做：统计分析 Tab 增加 PyQtChart 图表（告警严重度饼图 + 攻击类别柱状图）
+- [ ] 🔴 PDF必做：仪表盘增加实时流量折线图
+- [ ] 🟡 下载 3 个 PCAP 攻击样本 → `tests/test_pcaps/`
+- [ ] 🟡 统计整个项目代码行数（答辩用）
 
 - [ ] 
 - [ ] 

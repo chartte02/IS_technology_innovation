@@ -152,10 +152,11 @@ class SignatureMatcher:
                             self._ac_automaton = None
 
                     if self._ac_automaton is not None:
-                        # 使用 key 存储对应的 signature 和 pattern
+                        # AC automaton uses lowercase for case-insensitive matching
+                        ac_pattern = pattern.lower()
                         key = (sig.category, sig.sig_id, p_idx)
-                        self._ac_automaton.add_word(pattern, key)
-                        self._ac_sig_map[id(key)] = sig
+                        self._ac_automaton.add_word(ac_pattern, key)
+                        self._ac_sig_map[key] = sig
 
                 self._add_to_port_index(sig, compiled)
                 self._add_to_proto_index(sig, compiled)
@@ -312,7 +313,7 @@ class SignatureMatcher:
             seen_sig_ids.add(sig_id)
 
             # 查找对应的 signature
-            sig = self._ac_sig_map.get(id((category, sig_id, p_idx)))
+            sig = self._ac_sig_map.get((category, sig_id, p_idx))
             if sig is None:
                 continue
 

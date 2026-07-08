@@ -7,6 +7,7 @@
 import sys
 import time
 import threading
+import os
 from collections import deque
 from typing import Optional
 
@@ -19,12 +20,22 @@ try:
         QMenuBar, QAction, QFileDialog, QProgressBar, QCheckBox,
         QSpinBox, QFormLayout
     )
-    from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
-    from PyQt5.QtGui import QFont, QColor, QIcon, QPalette
+    from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QMargins
+    from PyQt5.QtGui import QFont, QColor, QIcon, QPalette, QPainter
     HAS_PYQT5 = True
 except ImportError:
     HAS_PYQT5 = False
-    print("警告: PyQt5 未安装，GUI 功能不可用。运行: pip install pyqt5 pyqtchart")
+    print("Warning: PyQt5 not installed. Run: pip install pyqt5 pyqtchart")
+
+try:
+    from PyQt5.QtChart import (
+        QChart, QChartView, QPieSeries, QBarSeries, QBarSet,
+        QLineSeries, QValueAxis, QBarCategoryAxis
+    )
+    HAS_PYQTCHART = True
+except ImportError:
+    HAS_PYQTCHART = False
+    print("Warning: PyQtChart not installed. Run: pip install pyqtchart")
 
 
 # ─── 工作线程（在后台运行检测引擎，不阻塞 GUI） ───
@@ -66,6 +77,12 @@ class IDSMainWindow(QMainWindow):
 
         super().__init__()
         self.engine = None          # 将在外部注入
+
+        # Chart data buffers (for real-time line chart)
+        self._pps_history = deque(maxlen=60)     # 60 seconds of PPS data
+        self._bps_history = deque(maxlen=60)     # 60 seconds of BPS data
+        self._chart_time_counter = 0
+
         self._init_ui()
         self._init_timers()
         self._init_menu()
@@ -207,38 +224,58 @@ class IDSMainWindow(QMainWindow):
         alert_layout.addWidget(self.table_recent)
         splitter.addWidget(alert_group)
 
-        # 实时流量指标
-        traffic_group = QGroupBox("实时流量统计")
-        traffic_layout = QGridLayout(traffic_group)
+        # 实时流量面板 = 折线图 + 文本指标 + TOP攻击来源
+        traffic_group = QGroupBox("实时流量")
+        traffic_layout = QVBoxLayout(traffic_group)
 
-        traffic_layout.addWidget(QLabel("包速率:"), 0, 0)
-        self.lbl_pps = QLabel("0 pps")
-        traffic_layout.addWidget(self.lbl_pps, 0, 1)
+        # --- 实时 PPS 折线图 ---
+        if HAS_PYQTCHART:
+            self._pps_series = QLineSeries()
+            self._pps_series.setName("PPS")
+            self._pps_series.setColor(QColor(0, 188, 212))
+            self._pps_chart = QChart()
+            self._pps_chart.addSeries(self._pps_series)
+            self._pps_chart.setTitle("Real-time Packet Rate")
+            self._pps_chart.setAnimationOptions(QChart.SeriesAnimations)
+            self._pps_chart.legend().hide()
+            self._pps_chart.setMargins(QMargins(0, 0, 0, 0))
+            self._pps_axis_x = QValueAxis()
+            self._pps_axis_x.setRange(0, 60)
+            self._pps_axis_x.setLabelFormat("%d")
+            self._pps_axis_x.setTitleText("Seconds ago")
+            self._pps_axis_y = QValueAxis()
+            self._pps_axis_y.setRange(0, 100)
+            self._pps_axis_y.setTitleText("PPS")
+            self._pps_chart.addAxis(self._pps_axis_x, Qt.AlignBottom)
+            self._pps_chart.addAxis(self._pps_axis_y, Qt.AlignLeft)
+            self._pps_series.attachAxis(self._pps_axis_x)
+            self._pps_series.attachAxis(self._pps_axis_y)
+            self._pps_chart_view = QChartView(self._pps_chart)
+            self._pps_chart_view.setRenderHint(QPainter.Antialiasing)
+            self._pps_chart_view.setMinimumHeight(180)
+            traffic_layout.addWidget(self._pps_chart_view)
+        else:
+            self._pps_chart_view = None
 
-        traffic_layout.addWidget(QLabel("字节速率:"), 1, 0)
-        self.lbl_bps = QLabel("0 B/s")
-        traffic_layout.addWidget(self.lbl_bps, 1, 1)
+        # --- 文本指标（紧凑一行）---
+        stats_row = QHBoxLayout()
+        self.lbl_pps = QLabel("PPS: 0")
+        self.lbl_bps = QLabel("BPS: 0")
+        self.lbl_conn = QLabel("Conn: 0")
+        self.lbl_hosts = QLabel("Hosts: 0")
+        self.lbl_streams = QLabel("TCP: 0")
+        for lbl in [self.lbl_pps, self.lbl_bps, self.lbl_conn, self.lbl_hosts, self.lbl_streams]:
+            lbl.setStyleSheet("font-size: 11px; padding: 2px 6px;")
+            stats_row.addWidget(lbl)
+        stats_row.addStretch()
+        traffic_layout.addLayout(stats_row)
 
-        traffic_layout.addWidget(QLabel("活跃连接:"), 2, 0)
-        self.lbl_conn = QLabel("0")
-        traffic_layout.addWidget(self.lbl_conn, 2, 1)
-
-        traffic_layout.addWidget(QLabel("跟踪主机:"), 3, 0)
-        self.lbl_hosts = QLabel("0")
-        traffic_layout.addWidget(self.lbl_hosts, 3, 1)
-
-        traffic_layout.addWidget(QLabel("TCP流数:"), 4, 0)
-        self.lbl_streams = QLabel("0")
-        traffic_layout.addWidget(self.lbl_streams, 4, 1)
-
-        traffic_layout.addWidget(QLabel(""), 5, 0)
-
-        # TOP 攻击来源
-        traffic_layout.addWidget(QLabel("TOP 攻击来源:"), 6, 0, 1, 2)
+        # --- TOP 攻击来源 ---
+        traffic_layout.addWidget(QLabel("TOP Attack Sources:"))
         self.text_top_ip = QTextEdit()
         self.text_top_ip.setReadOnly(True)
         self.text_top_ip.setMaximumHeight(100)
-        traffic_layout.addWidget(self.text_top_ip, 7, 0, 1, 2)
+        traffic_layout.addWidget(self.text_top_ip)
 
         splitter.addWidget(traffic_group)
         layout.addWidget(splitter)
@@ -283,33 +320,64 @@ class IDSMainWindow(QMainWindow):
         return w
 
     def _create_statistics_tab(self) -> QWidget:
-        """统计分析标签页"""
+        """统计分析标签页 — PyQtChart 图表"""
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        grid = QGridLayout()
+        # --- 图表行：左饼图 + 右柱状图 ---
+        charts_row = QHBoxLayout()
 
-        grid.addWidget(QLabel("按严重度分布:"), 0, 0)
-        self.text_severity = QTextEdit()
-        self.text_severity.setReadOnly(True)
-        self.text_severity.setMaximumHeight(120)
-        grid.addWidget(self.text_severity, 0, 1)
+        # 告警严重度饼图
+        if HAS_PYQTCHART:
+            self._pie_severity = QPieSeries()
+            self._pie_chart = QChart()
+            self._pie_chart.addSeries(self._pie_severity)
+            self._pie_chart.setTitle("Alert Severity Distribution")
+            self._pie_chart.setAnimationOptions(QChart.SeriesAnimations)
+            self._pie_chart.legend().setAlignment(Qt.AlignRight)
+            self._pie_chart_view = QChartView(self._pie_chart)
+            self._pie_chart_view.setRenderHint(QPainter.Antialiasing)
+            self._pie_chart_view.setMinimumSize(300, 250)
+            charts_row.addWidget(self._pie_chart_view)
+        else:
+            self._pie_chart_view = None
 
-        grid.addWidget(QLabel("按类别分布:"), 1, 0)
-        self.text_category = QTextEdit()
-        self.text_category.setReadOnly(True)
-        self.text_category.setMaximumHeight(120)
-        grid.addWidget(self.text_category, 1, 1)
+        # 攻击类别柱状图
+        if HAS_PYQTCHART:
+            self._bar_set = QBarSet("Count")
+            self._bar_set.setColor(QColor(255, 152, 0))
+            self._bar_series = QBarSeries()
+            self._bar_series.append(self._bar_set)
+            self._bar_chart = QChart()
+            self._bar_chart.addSeries(self._bar_series)
+            self._bar_chart.setTitle("Attack Category Distribution")
+            self._bar_chart.setAnimationOptions(QChart.SeriesAnimations)
+            self._bar_chart.legend().hide()
+            self._bar_axis_x = QBarCategoryAxis()
+            self._bar_axis_y = QValueAxis()
+            self._bar_axis_y.setTitleText("Count")
+            self._bar_chart.addAxis(self._bar_axis_x, Qt.AlignBottom)
+            self._bar_chart.addAxis(self._bar_axis_y, Qt.AlignLeft)
+            self._bar_series.attachAxis(self._bar_axis_x)
+            self._bar_series.attachAxis(self._bar_axis_y)
+            self._bar_chart_view = QChartView(self._bar_chart)
+            self._bar_chart_view.setRenderHint(QPainter.Antialiasing)
+            self._bar_chart_view.setMinimumSize(300, 250)
+            charts_row.addWidget(self._bar_chart_view)
+        else:
+            self._bar_chart_view = None
 
-        grid.addWidget(QLabel("TOP 10 攻击源IP:"), 2, 0)
+        layout.addLayout(charts_row)
+
+        # --- TOP 攻击来源（保留文本，因为柱状图标签太多时效果差）---
+        layout.addWidget(QLabel("TOP 10 Attack Source IPs:"))
         self.text_top_src = QTextEdit()
         self.text_top_src.setReadOnly(True)
-        self.text_top_src.setMaximumHeight(200)
-        grid.addWidget(self.text_top_src, 2, 1)
+        self.text_top_src.setMaximumHeight(150)
+        layout.addWidget(self.text_top_src)
 
-        layout.addLayout(grid)
-
-        self.btn_refresh_stats = QPushButton("刷新统计")
+        # 刷新按钮
+        self.btn_refresh_stats = QPushButton("Refresh Statistics")
         self.btn_refresh_stats.clicked.connect(self._refresh_statistics)
         layout.addWidget(self.btn_refresh_stats)
 
@@ -330,8 +398,10 @@ class IDSMainWindow(QMainWindow):
         ])
         info_bar.addWidget(self.cmb_sig_file)
         self.btn_load_sig = QPushButton("查看")
+        self.btn_load_sig.clicked.connect(self._on_view_signature)
         info_bar.addWidget(self.btn_load_sig)
         self.btn_reload_all = QPushButton("重新加载全部")
+        self.btn_reload_all.clicked.connect(self._on_reload_signatures)
         info_bar.addWidget(self.btn_reload_all)
         info_bar.addStretch()
         layout.addLayout(info_bar)
@@ -362,10 +432,20 @@ class IDSMainWindow(QMainWindow):
                          f"font-weight: bold; }}")
         layout = QVBoxLayout(gb)
         lbl = QLabel(value)
+        lbl.setObjectName(f"stat_card_value_{title}")  # 用 objectName 精确查找
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setStyleSheet(f"font-size: 28px; font-weight: bold; color: {color};")
         layout.addWidget(lbl)
+        # 保存引用，避免 findChild 不确定性
+        gb._value_label = lbl
         return gb
+
+    @staticmethod
+    def _set_card_value(card: QGroupBox, text: str):
+        """安全更新统计卡片的值"""
+        lbl = getattr(card, '_value_label', None)
+        if lbl is not None:
+            lbl.setText(text)
 
     def _set_dark_theme(self):
         """设置暗色主题"""
@@ -495,6 +575,34 @@ class IDSMainWindow(QMainWindow):
                 json.dump(alerts, f, ensure_ascii=False, indent=2)
             self._log(f"告警已导出: {filepath}")
 
+    def _on_view_signature(self):
+        """查看特征库文件内容"""
+        import os
+        sig_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'signatures')
+        fname = self.cmb_sig_file.currentText()
+        fpath = os.path.join(sig_dir, fname)
+        try:
+            with open(fpath, 'r', encoding='utf-8') as f:
+                self.text_sig.setPlainText(f.read())
+            self._log(f"已加载: {fname}")
+        except Exception as e:
+            self.text_sig.setPlainText(f"读取失败: {e}")
+            self._log(f"读取特征库失败: {e}")
+
+    def _on_reload_signatures(self):
+        """重新加载所有特征库"""
+        if self.engine is None or self.engine.misuse_detector is None:
+            self._log("错误: 未注入检测引擎，无法重载特征库")
+            return
+        try:
+            count = self.engine.misuse_detector.reload()
+            self._log(f"特征库已重新加载: {count} 条规则")
+            QMessageBox.information(self, "重载完成",
+                                    f"成功重新加载 {count} 条攻击特征规则")
+        except Exception as e:
+            self._log(f"重载特征库失败: {e}")
+            QMessageBox.warning(self, "重载失败", str(e))
+
     def _on_about(self):
         """关于对话框"""
         QMessageBox.about(
@@ -514,23 +622,31 @@ class IDSMainWindow(QMainWindow):
         try:
             status = self.engine.get_status()
 
-            # 更新仪表盘卡片
+            # 更新仪表盘卡片（使用 _value_label 精确引用）
             stats = self.engine.alert_mgr.get_realtime_stats()
             all_stats = self.engine.alert_mgr.get_statistics()
-            self.card_total_alerts.findChild(QLabel).setText(
-                str(all_stats['total']))
-            self.card_critical.findChild(QLabel).setText(
-                str(stats.get('critical', 0)))
-            self.card_high.findChild(QLabel).setText(
-                str(stats.get('high', 0)))
-            self.card_medium.findChild(QLabel).setText(
-                str(stats.get('medium', 0)))
-            self.card_total_packets.findChild(QLabel).setText(
+            self._set_card_value(self.card_total_alerts, str(all_stats['total']))
+            self._set_card_value(self.card_critical, str(stats.get('critical', 0)))
+            self._set_card_value(self.card_high, str(stats.get('high', 0)))
+            self._set_card_value(self.card_medium, str(stats.get('medium', 0)))
+            self._set_card_value(self.card_total_packets,
                 str(status.get('packets_captured', 0)))
 
             # 更新流量统计
-            self.lbl_pps.setText(f"{status.get('pps', 0):.0f} pps")
-            self.lbl_bps.setText(f"{status.get('bytes_captured', 0) / max(status.get('elapsed', 1), 1):.0f} B/s")
+            self.lbl_pps.setText(f"PPS: {status.get('pps', 0):.0f}")
+            self.lbl_bps.setText(f"BPS: {status.get('bytes_captured', 0) / max(status.get('elapsed', 1), 1):.0f}")
+            self.lbl_conn.setText(f"Conn: 0")
+            self.lbl_hosts.setText(f"Hosts: 0")
+            self.lbl_streams.setText(f"TCP: 0")
+
+            # 更新 PPS 历史 + 实时折线图
+            current_pps = status.get('pps', 0)
+            self._pps_history.append(current_pps)
+            self._bps_history.append(
+                status.get('bytes_captured', 0) / max(status.get('elapsed', 1), 1)
+            )
+            self._chart_time_counter += 1
+            self._update_realtime_chart()
 
             # 状态栏
             self.pps_label.setText(f"PPS: {status.get('pps', 0):.0f}")
@@ -559,30 +675,77 @@ class IDSMainWindow(QMainWindow):
         except Exception as e:
             pass
 
+        # Auto-refresh statistics charts every 5 seconds
+        if self._chart_time_counter % 5 == 0:
+            self._refresh_statistics()
+
+    def _update_realtime_chart(self):
+        """更新实时 PPS 折线图"""
+        if not HAS_PYQTCHART or self._pps_chart_view is None:
+            return
+
+        series = self._pps_series
+        series.clear()
+
+        # Plot from oldest (left) to newest (right)
+        n = len(self._pps_history)
+        for i, pps in enumerate(self._pps_history):
+            # X axis: seconds ago (0 = now)
+            x = -(n - 1 - i)
+            series.append(x, pps)
+
+        # Adjust Y axis range
+        max_pps = max(self._pps_history) if self._pps_history else 10
+        self._pps_axis_y.setRange(0, max(100, max_pps * 1.3))
+        self._pps_axis_x.setRange(-n, 5)
+
     def _refresh_statistics(self):
-        """刷新统计面板"""
+        """刷新统计面板图表（按按钮或定时器触发）"""
         if self.engine is None:
             return
 
         stats = self.engine.alert_mgr.get_statistics()
 
-        # 按严重度
-        lines = []
-        for sev, count in stats['by_severity'].items():
-            lines.append(f"  {sev}: {count}")
-        self.text_severity.setText('\n'.join(lines) if lines else "无数据")
+        # 严重度饼图
+        if HAS_PYQTCHART and hasattr(self, '_pie_severity'):
+            self._pie_severity.clear()
+            severity_colors = {
+                'critical': QColor(0xd3, 0x2f, 0x2f),
+                'high':     QColor(0xf5, 0x7c, 0x00),
+                'medium':   QColor(0xfb, 0xc0, 0x2d),
+                'low':      QColor(0x19, 0x76, 0xd2),
+            }
+            for sev, count in sorted(stats.get('by_severity', {}).items(),
+                                     key=lambda x: {'critical':0,'high':1,'medium':2,'low':3}.get(x[0],9)):
+                if count > 0:
+                    sl = self._pie_severity.append(sev, count)
+                    if sev in severity_colors:
+                        sl.setColor(severity_colors[sev])
+            # Add "info" / "other" as grey
+            for sev, count in stats.get('by_severity', {}).items():
+                if count > 0 and sev not in severity_colors:
+                    sl = self._pie_severity.append(sev, count)
+                    sl.setColor(QColor(0x9e, 0x9e, 0x9e))
 
-        # 按类别
-        lines = []
-        for cat, count in stats['by_category'].items():
-            lines.append(f"  {cat}: {count}")
-        self.text_category.setText('\n'.join(lines) if lines else "无数据")
+        # 类别柱状图
+        if HAS_PYQTCHART and hasattr(self, '_bar_set'):
+            cats = sorted(stats.get('by_category', {}).items(),
+                          key=lambda x: x[1], reverse=True)
+            self._bar_set.remove(0, self._bar_set.count())
+            categories = []
+            for cat, count in cats[:8]:  # top 8 categories
+                self._bar_set.append(count)
+                categories.append(cat)
+            self._bar_axis_x.clear()
+            self._bar_axis_x.append(categories)
+            max_val = max([c for _, c in cats[:8]], default=1)
+            self._bar_axis_y.setRange(0, max_val * 1.2)
 
-        # TOP 攻击源
+        # TOP 攻击源 IP
         lines = []
         for ip, count in stats.get('top_attack_sources', [])[:10]:
-            lines.append(f"  {ip}: {count} 次攻击")
-        self.text_top_src.setText('\n'.join(lines) if lines else "无数据")
+            lines.append(f"  {ip}: {count} attacks")
+        self.text_top_src.setText('\n'.join(lines) if lines else "No data")
 
     def _populate_interfaces(self):
         """填充网络接口列表"""
