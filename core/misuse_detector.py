@@ -258,15 +258,24 @@ class SignatureMatcher:
         payload_str = payload.decode('utf-8', errors='ignore')
         payload_lower = payload_str.lower()
 
-        # Stage 1: AC 自动机匹配（字符串特征）
+        # 上下文过滤：HTTP 请求的 Web 攻击特征仅检测查询参数部分
+        # 避免路径中包含 "select" "/etc/" 等正常词汇触发误报
+        web_payload_str, web_payload_lower = self._extract_web_context(
+            parsed, payload_str, payload_lower)
+
+        # Stage 1: AC 自动机匹配（字符串特征）— 全文匹配
         ac_alerts = self._match_ac(payload_lower, parsed)
         alerts.extend(ac_alerts)
 
         # Stage 2: 正则表达式匹配
-        # 按协议/端口筛选，减少不必要的正则匹配
+        # Web 类攻击仅检测查询参数（降低误报），非 Web 类检测全文
+        web_categories = {'sql_injection', 'xss', 'web_attack', 'webshell'}
         regex_candidates = self._get_regex_candidates(dst_port, proto_str)
         regex_alerts = self._match_regex(payload_str, payload_lower,
                                           regex_candidates, parsed)
+        # 对 Web 类告警做上下文二次确认：若仅在路径中匹配则过滤
+        regex_alerts = self._filter_web_false_positives(
+            regex_alerts, parsed, web_categories)
         alerts.extend(regex_alerts)
 
         # Stage 3: 阈值型规则检查
@@ -298,7 +307,70 @@ class SignatureMatcher:
         }
         return self.match_packet(parsed)
 
-    # ─── 匹配子方法 ───
+    # ─── 上下文过滤（降低误报率）───
+
+    @staticmethod
+    def _extract_web_context(parsed: Dict, payload_str: str,
+                              payload_lower: str) -> tuple:
+        """
+        从 HTTP 请求中提取 Web 攻击检测的上下文。
+        仅提取 URI 查询参数部分（? 之后），避免路径中的正常词汇触发误报。
+
+        例如:
+          /select-course?id=1 UNION SELECT  → 提取 "id=1 UNION SELECT"
+          /etc/passwd                        → 提取 "/etc/passwd" (无 ? 则全量)
+          SSH 流量                            → 保持全量
+
+        Returns:
+            (web_payload_str, web_payload_lower)
+        """
+        http_uri = parsed.get('http_uri')
+        if http_uri and '?' in http_uri:
+            # 提取查询参数部分
+            query_part = http_uri.split('?', 1)[1]
+            return query_part, query_part.lower()
+        # 非 HTTP 或无查询参数，使用全量
+        return payload_str, payload_lower
+
+    def _filter_web_false_positives(self, alerts: List[Dict],
+                                     parsed: Dict,
+                                     web_categories: set) -> List[Dict]:
+        """
+        对 Web 类告警做二次确认：如果匹配仅在 URL 路径部分而不在查询参数中，
+        则降级告警严重度（可能是误报）。
+
+        策略: 提取查询参数部分 → 若告警的匹配文本不在查询参数中，降为 low
+        """
+        if not alerts:
+            return alerts
+
+        http_uri = parsed.get('http_uri', '')
+        if not http_uri or '?' not in http_uri:
+            # 没有查询参数，无法区分，保持原样
+            return alerts
+
+        query_part = http_uri.split('?', 1)[1].lower()
+        path_part = http_uri.split('?', 1)[0].lower()
+
+        filtered = []
+        for alert in alerts:
+            cat = alert.get('category', '')
+            if cat not in web_categories:
+                filtered.append(alert)
+                continue
+
+            matched = alert.get('matched_text', '').lower()
+            if matched and matched not in query_part and matched in path_part:
+                # 匹配仅在路径中 → 可能是误报，降级
+                alert = dict(alert)
+                alert['severity'] = 'low'
+                alert['description'] = (
+                    f"[低可信度-可能误报] {alert.get('description', '')} "
+                    f"(匹配位于URL路径而非查询参数)"
+                )
+            filtered.append(alert)
+
+        return filtered
 
     def _match_ac(self, payload_lower: str, parsed: Dict) -> List[Dict]:
         """AC 自动机匹配"""

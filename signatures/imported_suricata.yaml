@@ -1,0 +1,205 @@
+# ==============================================
+# Suricata 规则导入 — 自动生成
+# 导入规则数: 15
+# ==============================================
+
+- id: SUR-1000001
+  name: 'Suricata: SQL Injection - UNION SELECT'
+  category: web_attack
+  severity: high
+  patterns:
+  - UNION SELECT
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000002
+  name: 'Suricata: SQL Injection - OR 1=1'
+  category: web_attack
+  severity: high
+  patterns:
+  - OR 1=1
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000003
+  name: 'Suricata: XSS - Script Tag'
+  category: web_attack
+  severity: high
+  patterns:
+  - <script
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000004
+  name: 'Suricata: Directory Traversal'
+  category: web_attack
+  severity: high
+  patterns:
+  - ../
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000005
+  name: 'Suricata: PHP Code Injection'
+  category: web_attack
+  severity: high
+  patterns:
+  - <?php
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000006
+  name: 'Suricata: Command Injection - wget'
+  category: web_attack
+  severity: high
+  patterns:
+  - 'wget '
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000007
+  name: 'Suricata: WebShell - eval POST'
+  category: web_attack
+  severity: high
+  patterns:
+  - eval
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000008
+  name: 'Suricata: SQL Injection - information_schema'
+  category: web_attack
+  severity: high
+  patterns:
+  - information_schema
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-2000001
+  name: 'Suricata: SSH Brute Force Attempt'
+  category: brute_force
+  severity: high
+  patterns:
+  - Failed password
+  enabled: true
+  ports:
+  - 22
+- id: SUR-2000002
+  name: 'Suricata: FTP Brute Force Attempt'
+  category: brute_force
+  severity: high
+  patterns:
+  - 530 Login
+  enabled: true
+  ports:
+  - 21
+- id: SUR-3000001
+  name: 'Suricata: Nikto Scan Detected'
+  category: scan
+  severity: medium
+  patterns:
+  - Nikto
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-3000002
+  name: 'Suricata: SQLMap Attack'
+  category: web_attack
+  severity: high
+  patterns:
+  - sqlmap
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-4000001
+  name: 'Suricata: Slowloris Attack'
+  category: dos
+  severity: high
+  patterns:
+  - 'X-a: b'
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000009
+  name: 'Suricata: File Inclusion - /etc/passwd'
+  category: web_attack
+  severity: high
+  patterns:
+  - /etc/passwd
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000010
+  name: 'Suricata: ShellShock Attack'
+  category: web_attack
+  severity: high
+  patterns:
+  - () {
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443

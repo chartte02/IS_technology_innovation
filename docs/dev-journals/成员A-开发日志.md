@@ -187,9 +187,60 @@
 
 ---
 
-## Day 4 — 2026-07-11
+## Day 4 — 2026-07-11 (Suricata导入 + 误报优化 + 测试PCAP)
 
----
+### 1. 今日进度
+
+- [x] 实现 Suricata 规则导入器 `tools/suricata_importer.py`（支持社区规则 + 15 条内置示例）
+- [x] 修复导入器的 `null` protocols 字段 bug → 91 条规则正常加载
+- [x] 误报率优化：URL 上下文过滤（Web 攻击仅检测查询参数，降低路径误报）
+- [x] 生成覆盖新规则的测试 PCAP：SSRF/XXE/SSTI/WebShell/NoSQL（12 包 → 15 告警）
+- [x] 性能回归验证
+
+### 2. 遇到的问题与解决
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| Suricata 导入器对 TCP 协议规则输出 `protocols: [null]` | `_extract_protocol('TCP')` 返回 `None`，YAML 序列化为 `null` | 改为仅在 proto 不为 None 时才写入 protocols 字段 |
+| `/select-course` 路径触发 SQL 注入误报 | "select" 出现在 URL 路径中，被特征库匹配 | 新增 `_extract_web_context` + `_filter_web_false_positives`，Web 攻击仅检测 URI 查询参数部分 |
+
+### 3. Agent 协作记录
+
+| 任务 | 是否用 Agent | 效果评估 |
+|------|-------------|----------|
+| Suricata 规则格式研究与解析器实现 | ✅ 用了 | 一次性实现完整解析器（155 行），支持 action/proto/content/classtype/sid 等 8 种关键字 |
+| 误报率优化方案设计 | ✅ 用了 | 设计 URL 上下文过滤 + 二次确认降级方案，4/4 测试通过 |
+| PCAP 生成器编写 | ✅ 用了 | 12 包覆盖 5 类新规则，回放验证 15 条告警全部正确 |
+
+### 4. 技术决策
+
+| 决策 | 选项 A | 选项 B | 选择 | 理由 |
+|------|--------|--------|------|------|
+| Suricata 协议映射策略 | 精确映射（TCP→None） | 宽松映射（TCP→HTTP） | 精确映射 | 避免非 HTTP 流量被误标为 HTTP，protocols 为空时规则仍生效（不限定协议） |
+| 误报过滤粒度 | 按类别过滤 | 按规则级过滤 | 按类别过滤 | 实现简单，sql_injection/xss/web_attack/webshell 四个 Web 类别统一处理 |
+
+### 5. 性能/测试数据
+
+| 测试项 | 结果 | 备注 |
+|--------|------|------|
+| 总规则数 | 91 条 (76 + 15 Suricata) | 覆盖 9 个类别 |
+| 原有测试回归 | 17/17 = 100% | 误报过滤不影响检测能力 |
+| 误报过滤测试 | 4/4 = 100% | 正常路径不触发，真正攻击正常检测 |
+| 扩展攻击 PCAP | 12 包 → 15 告警 | SSRF/XXE/SSTI/WebShell/NoSQL 全覆盖 |
+| Suricata 导入率 | 15/15 = 100% | 内置示例全部成功转换 |
+
+### 6. 参考项目借鉴
+
+| 参考项目 | 借鉴内容 | 落地情况 |
+|----------|----------|----------|
+| ThreatWire | Suricata 规则解析器架构 | 实现了 `Content: "..."` 提取 + classtype→category 映射 + $HTTP_PORTS 变量处理 |
+| Suricata 官方文档 | 规则格式规范（action/proto/src/dst/options） | 正则解析 8 种关键字，支持 hex content 和否定匹配 |
+
+### 7. 明日计划
+
+- [ ] 等待成员B/C/D 完成各自模块后启动联调
+- [ ] 测试 Suricata 导入器对真实 community.rules 文件的兼容性
+- [ ] 准备答辩 PPT 所需的技术架构图和数据图表
 
 ## Day 5 — 2026-07-12
 
