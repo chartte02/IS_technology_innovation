@@ -74,43 +74,61 @@
 
 ### 1. 今日进度
 
-- [ ] 
-- [ ] 
+- [x] 跑通 `main.py --replay` 全链路（PCAP→解析→检测→告警）
+- [x] 修复 `_build_alert` 缺少 `type` 和 `description` 字段，对齐接口约定 CLAUDE.md §5.2
+- [x] `sql_injection.yaml` 扩展 7 条新规则（报错注入/盲注/NoSQL/字符串拼接绕过/Oracle/PostgreSQL）
+- [x] `web_attack.yaml` 扩展 4 条新规则（SSRF/XXE/SSTI/反序列化）
+- [x] 新建 `signatures/webshell.yaml`（蚁剑/冰蝎/哥斯拉/菜刀/JSP/ASPX 共 7 条）
+- [x] 性能回归测试
 
 ### 2. 遇到的问题与解决
 
 | 问题 | 原因 | 解决方案 |
 |------|------|----------|
-| | | |
+| `_build_alert` 输出缺少 `type`/`description` 字段 | 初版代码未完全对齐 CLAUDE.md §5.2 接口约定 | 在 `_build_alert` 和 `_check_threshold_rules` 中补全这两个字段 |
+| PCAP 回放 `alerts: 0` 统计错误 | `replay_pcap` 方法未统计告警数（成员B 代码） | 不影响检测功能，告警已通过 `alert_mgr.submit_batch` 正常提交；已记录待与成员B 沟通 |
+| Scapy 警告 `No libpcap provider available` | Windows 未安装 Npcap | 不影响 PCAP 回放测试，实时抓包需安装 Npcap（WinPcap 兼容模式） |
 
 ### 3. Agent 协作记录
 
 | 任务 | 是否用 Agent | 效果评估 |
 |------|-------------|----------|
-| | | |
+| 全链路 PCAP 回放测试 | ✅ 用了 | 一次性跑通 16 包 → 20 告警，覆盖 4 类攻击 |
+| 对照接口约定检查 alert 字段缺失 | ✅ 用了 | 逐字段对比发现 2 个缺失字段，准确定位修复 |
+| 新规则编写（18 条） | ✅ 用了 | SQL注入 +7 / Web攻击 +4 / WebShell +7，所有新规则即时验证 |
+| 性能回归测试（76 规则） | ✅ 用了 | 10 秒出结果，确认规则增加 31% 不影响性能目标 |
 
 ### 4. 技术决策
 
 | 决策 | 选项 A | 选项 B | 选择 | 理由 |
 |------|--------|--------|------|------|
-| | | | | |
+| alert `type` 字段取值 | 新增独立的 `type` 枚举 | 复用 `category` | 复用 `category` | 当前规则体系中 category 已足够区分类型，避免过度设计 |
+| WebShell 规则存放 | 合并到 web_attack.yaml | 独立 webshell.yaml | 独立文件 | WebShell 检测逻辑与 Web 攻击不同，独立文件便于维护和扩展 |
+| SSTI 检测 pattern 设计 | 仅匹配 `{{` | 匹配 `{{` + `__class__` 等 Python 对象链 | 组合匹配 | 单独 `{{` 误报太多（前端模板），加上 `__class__`/`__mro__` 等降低误报 |
 
 ### 5. 性能/测试数据
 
 | 测试项 | 结果 | 备注 |
 |--------|------|------|
-| | | |
+| 规则总数 | 76 条 (Day1: 58) | 新增 18 条，增长 31% |
+| 类别分布 | sql_injection 17 / xss 10 / web_attack 13 / webshell 7 / backdoor 9 / brute_force 6 / scan 8 / dos 6 | 新增 webshell 类别 |
+| PCAP 回放告警 | 16 包 → 20 条告警 | SQL注入/XSS/Web攻击/暴力破解 全覆盖 |
+| 76 规则匹配延迟 | 107 μs/包 | 仍远低于 <1ms 目标 |
+| 76 规则吞吐量 | 9,375 pps | 高于 5,000 pps 目标 |
+| 测试准确率 | 17/17 = 100% | 无回归 |
 
 ### 6. 参考项目借鉴
 
 | 参考项目 | 借鉴内容 | 落地情况 |
 |----------|----------|----------|
-| | | |
+| ThreatWire | 1200+ 规则的组织方式、规则字段设计 | 参考其按攻击类型独立文件、protocols/ports 绑定模式，新增 webshell.yaml 独立分类 |
+| OWASP Top 10 (2021) | 攻击分类覆盖检查 | 对照 OWASP Top 10 确认覆盖了注入/XXE/SSRF/SSTI/反序列化等类别 |
 
 ### 7. 明日计划
 
-- [ ] 
-- [ ] 
+- [ ] 与成员B 联调：确认 parsed_packet 格式匹配
+- [ ] 与成员C 联调：确认 anomaly_detector 接口在 main.py 中对接正确
+- [ ] 性能对比：AC 自动机 vs 纯正则暴力匹配（答辩素材） 
 
 ---
 

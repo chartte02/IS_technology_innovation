@@ -115,3 +115,92 @@
   patterns:
     - "(?i)sqlmap/[0-9.]+"
     - "(?i)sqlmap.*\\(http://sqlmap\\.org\\)"
+
+# --- 报错注入（Error-based）---
+- id: SQLI-011
+  name: "SQL Injection - MySQL Error Based"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)extractvalue\\s*\\(.*,.*\\)"
+    - "(?i)updatexml\\s*\\(.*,.*,.*\\)"
+    - "(?i)floor\\s*\\(.*rand\\s*\\(.*\\)\\s*\\*\\s*2\\)"
+    - "(?i)exp\\s*\\(~\\s*\\(.*\\*\\)\\)"
+    - "(?i)polygon\\s*\\(.*\\*\\)"
+
+- id: SQLI-012
+  name: "SQL Injection - PostgreSQL/Oracle Error Based"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)utl_inaddr\\.get_host_name\\s*\\("
+    - "(?i)utl_http\\.request\\s*\\("
+    - "(?i)dbms_pipe\\.receive_message\\s*\\("
+    - "(?i)ctxsys\\.drithsx\\.sn\\s*\\("
+    - "(?i)ctxsys\\.drithsx\\.sn\\s*\\("
+    - "(?i)dbms_ldap\\.init\\s*\\("
+
+- id: SQLI-013
+  name: "SQL Injection - Boolean Blind Detection"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)and\\s+\\d\\s*=\\s*\\d"
+    - "(?i)and\\s+['\"]\\d['\"]\\s*=\\s*['\"]\\d['\"]"
+    - "(?i)or\\s+\\d\\s*=\\s*\\d\\s*--"
+    - "(?i)and\\s+1\\s*>\\s*0"
+
+- id: SQLI-014
+  name: "SQL Injection - CONVERT/CAST Function Abuse"
+  category: sql_injection
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)convert\\s*\\(.*using\\s+"
+    - "(?i)convert\\s*\\(.*,(signed|unsigned|char|binary)\\)"
+    - "(?i)cast\\s*\\(.*\\s+as\\s+(signed|unsigned|char)\\)"
+
+- id: SQLI-015
+  name: "SQL Injection - PostgreSQL Specific"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)pg_read_file\\s*\\("
+    - "(?i)pg_read_binary_file\\s*\\("
+    - "(?i)copy\\s+\\w+\\s+from\\s+"
+    - "(?i)copy\\s+\\w+\\s+to\\s+"
+    - "(?i)pg_sleep\\s*\\("
+
+- id: SQLI-016
+  name: "SQL Injection - NoSQL Injection Attempt"
+  category: sql_injection
+  severity: high
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\$gt['\"]?\\s*:"
+    - "(?i)\\$ne['\"]?\\s*:"
+    - "(?i)\\$regex['\"]?\\s*:"
+    - "(?i)\\$where['\"]?\\s*:"
+    - "(?i)\\{\\s*['\"]\\$"
+
+- id: SQLI-017
+  name: "SQL Injection - String Concatenation Bypass"
+  category: sql_injection
+  severity: medium
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)concat\\s*\\([^)]+,[^)]+\\)"
+    - "(?i)concat_ws\\s*\\([^)]+,[^)]+\\)"
+    - "(?i)group_concat\\s*\\("
+    - "(?i)\\|\\(.*\\|\\|.*\\)"

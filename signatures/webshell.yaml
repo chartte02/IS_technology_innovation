@@ -1,0 +1,99 @@
+# ============================================================
+# WebShell 后门特征库
+# 覆盖蚁剑、冰蝎、哥斯拉等中国常见 Webshell 管理工具
+# ============================================================
+
+# --- 蚁剑 (AntSword) ---
+- id: WSHELL-001
+  name: "WebShell - AntSword (蚁剑) Core Payload"
+  category: webshell
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)@ini_set\\s*\\(\\s*['\"]display_errors['\"]\\s*,\\s*['\"]0['\"]\\s*\\)"
+    - "(?i)@set_time_limit\\s*\\(\\s*0\\s*\\)"
+    - "(?i)\\$_POST\\[['\"]antsword['\"]\\]"
+    - "(?i)base64_decode\\s*\\(\\s*\\$_POST"
+
+# --- 冰蝎 (Behinder) ---
+- id: WSHELL-002
+  name: "WebShell - Behinder (冰蝎) AES Encrypted Traffic"
+  category: webshell
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)AES.*CBC"
+    - "(?i)AES.*ECB"
+    - "(?i)openssl_decrypt\\s*\\(\\s*\\$_POST"
+    - "(?i)openssl_encrypt\\s*\\(\\s*\\$_POST"
+    - "(?i)\\$_SESSION\\[['\"]k['\"]\\]"
+
+# --- 哥斯拉 (Godzilla) ---
+- id: WSHELL-003
+  name: "WebShell - Godzilla (哥斯拉) Java/PHP Payload"
+  category: webshell
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)javax\\.crypto\\.spec\\.SecretKeySpec"
+    - "(?i)javax\\.crypto\\.Cipher"
+    - "(?i)ClassLoader.*defineClass"
+    - "(?i)\\$_POST\\[['\"]pass['\"]\\]"
+    - "(?i)md5\\s*\\(\\s*\\$_POST\\[['\"]pass['\"]\\]"
+
+# --- 中国菜刀 (China Chopper) ---
+- id: WSHELL-004
+  name: "WebShell - China Chopper (中国菜刀)"
+  category: webshell
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\$_POST\\[['\"]\\(z0|z1|z2\\)['\"]\\]"
+    - "(?i)eval\\s*\\(\\s*\\$_POST\\["
+    - "(?i)assert\\s*\\(\\s*\\$_POST\\["
+
+# --- 大马/通用 Webshell ---
+- id: WSHELL-005
+  name: "WebShell - Generic PHP WebShell Patterns"
+  category: webshell
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\bpreg_replace\\s*\\([^)]*/e[^)]*\\$_(GET|POST|REQUEST|COOKIE)"
+    - "(?i)\\bcreate_function\\s*\\([^)]*\\$_(GET|POST|REQUEST)"
+    - "(?i)\\$\\w+\\s*=\\s*\\$_POST\\[-?\\d+\\]"
+    - "(?i)\\bpassthru\\s*\\(\\s*\\$_(GET|POST|REQUEST)"
+    - "(?i)\\bshell_exec\\s*\\(\\s*\\$_(GET|POST|REQUEST)"
+    - "(?i)\\$_POST\\[['\"]cmd['\"]\\]"
+
+# --- JSP Webshell ---
+- id: WSHELL-006
+  name: "WebShell - JSP/Java WebShell Detection"
+  category: webshell
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)Runtime\\.getRuntime\\(\\)\\.exec"
+    - "(?i)ProcessBuilder.*start\\(\\)"
+    - "(?i)java\\.lang\\.reflect\\.Method"
+    - "(?i)new\\s+java\\.io\\.BufferedReader"
+
+# --- ASP/ASPX Webshell ---
+- id: WSHELL-007
+  name: "WebShell - ASP/ASPX WebShell Detection"
+  category: webshell
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)Server\\.CreateObject\\s*\\(\\s*['\"]WScript\\.Shell['\"]"
+    - "(?i)Server\\.CreateObject\\s*\\(\\s*['\"]Scripting\\.FileSystemObject['\"]"
+    - "(?i)Server\\.CreateObject\\s*\\(\\s*['\"]Adodb\\.Stream['\"]"
+    - "(?i)Eval\\s*\\(\\s*Request\\s*\\(\\s*['\"]"
+    - "(?i)Execute\\s*\\(\\s*Request\\s*\\(\\s*['\"]"

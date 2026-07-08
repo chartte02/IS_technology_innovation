@@ -405,11 +405,22 @@ class SignatureMatcher:
                 alerts.append({
                     'signature_id': sig.sig_id,
                     'signature_name': sig.name,
+                    'type': sig.category,
                     'category': sig.category,
                     'severity': sig.severity,
-                    'matched_pattern': f"threshold: {len(state[flow_key])}/{threshold_count} in {window}s",
+                    'description': (
+                        f"检测到 {sig.name}，"
+                        f"在 {window}s 内触发 {len(state[flow_key])}/{threshold_count} 次，"
+                        f"来源: {src_ip} → {dst_ip}:{port}"
+                    ),
+                    'matched_pattern': (
+                        f"threshold: {len(state[flow_key])}/{threshold_count}"
+                        f" in {window}s"
+                    ),
+                    'matched_text': '',
                     'src_ip': src_ip,
                     'dst_ip': dst_ip,
+                    'src_port': parsed.get('src_port', 0),
                     'dst_port': port,
                     'timestamp': now,
                 })
@@ -433,14 +444,20 @@ class SignatureMatcher:
 
     def _build_alert(self, sig: Signature, pattern: str,
                      matched_text: str, parsed: Dict) -> Dict:
-        """构造告警字典"""
+        """构造告警字典，对齐接口约定 (CLAUDE.md §5.2)"""
         return {
             'signature_id': sig.sig_id,
             'signature_name': sig.name,
-            'category': sig.category,
+            'type': sig.category,                     # 具体类型
+            'category': sig.category,                 # 大类
             'severity': sig.severity,
+            'description': (
+                f"检测到 {sig.name}，"
+                f"匹配模式: {pattern[:80]}，"
+                f"来源: {parsed.get('src_ip', '?')}:{parsed.get('src_port', '?')}"
+            ),
             'matched_pattern': pattern,
-            'matched_text': matched_text[:100],  # 截断显示
+            'matched_text': matched_text[:100],       # 截断显示
             'src_ip': parsed.get('src_ip', ''),
             'dst_ip': parsed.get('dst_ip', ''),
             'src_port': parsed.get('src_port', 0),
