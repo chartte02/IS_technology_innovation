@@ -12,6 +12,7 @@
   threshold:
     count: 5
     window: 60
+    track: by_src                  # 按源IP追踪（同一攻击者对同一目标）
   flowbits:
     set: [ssh_failed_attempt]      # 标记: 检测到 SSH 登录失败
     track: by_src                  # 按源IP追踪
@@ -47,6 +48,7 @@
   threshold:
     count: 5
     window: 60
+    track: by_src
   patterns:
     - "530 Login incorrect"
     - "530 User"
@@ -63,6 +65,11 @@
   threshold:
     count: 10
     window: 60
+    track: by_src
+    escalate:                    # 升级机制: 5分钟内30次 → critical
+      window: 300
+      count: 30
+      severity: critical
   patterns:
     - "401 Unauthorized"
     - "403 Forbidden"
