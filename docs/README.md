@@ -25,7 +25,14 @@ python main.py
 python main.py --console
 
 # PCAP 回放测试
-python main.py --replay tests/test_pcaps/sample.pcap
+python main.py --replay tests/test_pcaps/synthetic_attacks.pcap
+python main.py --replay tests/test_pcaps/extended_attacks.pcap
+
+# 生成测试 PCAP
+python tests/generate_test_pcap.py
+
+# 导入 Suricata 规则
+python tools/suricata_importer.py --sample
 
 # 基线学习（1小时）
 python main.py --console --learn 3600
@@ -52,16 +59,19 @@ python test_signature_match.py
 
 ## 检测能力
 
-| 检测类型 | 覆盖范围 |
-|----------|----------|
-| SQL 注入 | UNION, 盲注, 报错注入, 时间注入, 堆叠查询, 注释绕过 |
-| XSS | Script 标签, 事件处理器, 编码绕过, SVG/IFrame |
-| Web 攻击 | 目录遍历, 命令注入, 文件包含, SSRF, XXE, SSTI |
-| 暴力破解 | SSH, FTP, HTTP, RDP, Telnet |
-| 后门/木马 | C2 通信, Web Shell, 挖矿木马, DNS 隧道 |
-| DoS/DDoS | SYN Flood, Slowloris, HTTP Flood, DNS 放大 |
-| 扫描探测 | 端口扫描, 漏洞扫描器指纹, 敏感路径探测 |
-| 异常行为 | 端口扫描, 横向扩散, 高频流量, 基线偏离 |
+| 检测类型 | 覆盖范围 | 规则数 |
+|----------|----------|--------|
+| SQL 注入 | UNION, 盲注, 报错注入, 时间注入, 堆叠查询, NoSQL, HEX绕过, PostgreSQL/Oracle | 17 |
+| XSS | Script 标签, 事件处理器, 编码绕过, SVG/IFrame, CSS表达式 | 10 |
+| Web 攻击 | 目录遍历, 命令注入, 文件包含, SSRF, XXE, SSTI, PHP代码执行 | 24 |
+| WebShell | 蚁剑, 冰蝎, 哥斯拉, 中国菜刀, JSP/ASPX Webshell | 7 |
+| 暴力破解 | SSH, FTP, HTTP, RDP, Telnet | 8 |
+| 后门/木马 | C2 通信, CobaltStrike, Meterpreter, 挖矿木马, DNS 隧道 | 9 |
+| DoS/DDoS | SYN Flood, Slowloris, HTTP Flood, DNS 放大 | 7 |
+| 扫描探测 | Nmap, Nikto, Nessus, Burp, SQLMap 等扫描器指纹 | 9 |
+| 异常行为 | 端口扫描, 横向扩散, 高频流量, 基线偏离 | — |
+
+> **合计**: 91 条规则, 301 个匹配模式, 9 大类别, 支持 Suricata 规则导入
 
 ## 团队分工
 
