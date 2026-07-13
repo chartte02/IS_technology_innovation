@@ -93,7 +93,7 @@ def main():
             issues = check_rule(rule, fname)
             if issues:
                 if file_issues == 0:
-                    print(f"\n📄 {fname} ({len(rules)} 条)")
+                    print(f"\n[{fname}] ({len(rules)} 条)")
                 for issue in issues:
                     print(f"  {issue}")
                     file_issues += 1
@@ -102,9 +102,9 @@ def main():
     print(f"\n{'='*60}")
     print(f"  检查完成: {total_rules} 条规则, {total_issues} 个问题")
     if total_issues == 0:
-        print(f"  ✅ 所有规则通过质量检查")
+        print(f"  [OK] 所有规则通过质量检查")
     else:
-        print(f"  📋 问题分类:")
+        print(f"  问题分类:")
         cats = {}
         # (简化统计)
         print(f"    可运行 --fix 查看修复建议")
