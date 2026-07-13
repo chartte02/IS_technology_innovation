@@ -615,14 +615,27 @@ class SignatureMatcher:
 
     # ─── 告警构造 ───
 
+    # MITRE ATT&CK 映射: category → (tactic_id, tactic_name, technique_id, technique_name)
+    MITRE_ATTACK_MAP = {
+        'sql_injection':  ('TA0001', 'Initial Access', 'T1190', 'Exploit Public-Facing Application'),
+        'xss':            ('TA0001', 'Initial Access', 'T1189', 'Drive-by Compromise'),
+        'web_attack':     ('TA0001', 'Initial Access', 'T1190', 'Exploit Public-Facing Application'),
+        'webshell':       ('TA0003', 'Persistence',     'T1505', 'Server Software Component'),
+        'brute_force':    ('TA0006', 'Credential Access','T1110', 'Brute Force'),
+        'backdoor':       ('TA0011', 'Command & Control','T1071', 'Application Layer Protocol'),
+        'dos':            ('TA0040', 'Impact',           'T1498', 'Network Denial of Service'),
+        'scan':           ('TA0043', 'Reconnaissance',   'T1046', 'Network Service Discovery'),
+    }
+
     def _build_alert(self, sig: Signature, pattern: str,
                      matched_text: str, parsed: Dict) -> Dict:
-        """构造告警字典，对齐接口约定 (CLAUDE.md §5.2)"""
+        """构造告警字典，对齐接口约定 (CLAUDE.md §5.2)，含 MITRE ATT&CK 映射"""
+        mitre = self.MITRE_ATTACK_MAP.get(sig.category, ('', '', '', ''))
         return {
             'signature_id': sig.sig_id,
             'signature_name': sig.name,
-            'type': sig.category,                     # 具体类型
-            'category': sig.category,                 # 大类
+            'type': sig.category,
+            'category': sig.category,
             'severity': sig.severity,
             'description': (
                 f"检测到 {sig.name}，"
@@ -630,12 +643,15 @@ class SignatureMatcher:
                 f"来源: {parsed.get('src_ip', '?')}:{parsed.get('src_port', '?')}"
             ),
             'matched_pattern': pattern,
-            'matched_text': matched_text[:100],       # 截断显示
+            'matched_text': matched_text[:100],
             'src_ip': parsed.get('src_ip', ''),
             'dst_ip': parsed.get('dst_ip', ''),
             'src_port': parsed.get('src_port', 0),
             'dst_port': parsed.get('dst_port', 0),
             'timestamp': parsed.get('timestamp', time.time()),
+            # MITRE ATT&CK 扩展字段
+            'mitre_tactic':       f"{mitre[0]} - {mitre[1]}",
+            'mitre_technique':    f"{mitre[2]} - {mitre[3]}",
         }
 
     @staticmethod
