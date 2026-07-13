@@ -703,10 +703,14 @@ class SignatureMatcher:
             lines = payload_str.split('\r\n')
             if not lines:
                 return positions
-            # Request line → URI
+            # Request line → URI (处理含空格的注入URI)
             parts = lines[0].split(' ')
             if len(parts) >= 2:
-                positions['uri'] = parts[1]
+                # 第二个到倒数第二个 (去掉 HTTP version)
+                if len(parts) >= 3 and parts[-1].startswith('HTTP'):
+                    positions['uri'] = ' '.join(parts[1:-1])
+                else:
+                    positions['uri'] = parts[1]
             # Headers
             header_end = 0
             for i, line in enumerate(lines[1:], 1):
@@ -741,7 +745,7 @@ class SignatureMatcher:
             pos = sig.match_position
             pos_text = http_positions.get(pos, '')
             matched = alert.get('matched_text', '')
-            if pos_text and matched.lower() not in pos_text.lower():
+            if pos_text and matched and matched.lower() not in pos_text.lower():
                 logger.debug(
                     f"PosFilter: {sig_id} 跳过, 匹配不在 {pos} 区域"
                 )
