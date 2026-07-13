@@ -80,6 +80,21 @@ class SignatureMatcher:
         # 阈值型规则的状态追踪: sig_id → {key: [timestamps]}
         self._threshold_states: Dict[str, Dict[str, List[float]]] = {}
 
+        # 白名单 IP（来自这些 IP 的告警直接忽略）
+        self._whitelist_ips: set = set()
+
+        # 内网 IP 前缀（来自内网的告警可能升级严重度）
+        self._internal_prefixes: List[str] = []
+
+    def set_whitelist(self, ips: List[str]) -> None:
+        """设置白名单 IP 列表（如已知扫描器、安全设备等）"""
+        self._whitelist_ips = set(ips)
+        logger.info(f"白名单已更新: {len(self._whitelist_ips)} 个 IP")
+
+    def set_internal_ranges(self, prefixes: List[str]) -> None:
+        """设置内网 IP 前缀列表（如 ['192.168.', '10.'] ）"""
+        self._internal_prefixes = prefixes
+
     # ─── 特征库加载 ───
 
     def load_all(self) -> int:
@@ -264,16 +279,19 @@ class SignatureMatcher:
             parsed, payload_str, payload_lower)
 
         # Stage 1: AC 自动机匹配（字符串特征）— 全文匹配
+        web_categories = {'sql_injection', 'xss', 'web_attack', 'webshell'}
         ac_alerts = self._match_ac(payload_lower, parsed)
+        # AC 自动机告警也需要上下文过滤
+        ac_alerts = self._filter_web_false_positives(
+            ac_alerts, parsed, web_categories)
         alerts.extend(ac_alerts)
 
         # Stage 2: 正则表达式匹配
         # Web 类攻击仅检测查询参数（降低误报），非 Web 类检测全文
-        web_categories = {'sql_injection', 'xss', 'web_attack', 'webshell'}
         regex_candidates = self._get_regex_candidates(dst_port, proto_str)
         regex_alerts = self._match_regex(payload_str, payload_lower,
                                           regex_candidates, parsed)
-        # 对 Web 类告警做上下文二次确认：若仅在路径中匹配则过滤
+        # 对 Web 类告警做上下文二次确认
         regex_alerts = self._filter_web_false_positives(
             regex_alerts, parsed, web_categories)
         alerts.extend(regex_alerts)
@@ -336,41 +354,124 @@ class SignatureMatcher:
                                      parsed: Dict,
                                      web_categories: set) -> List[Dict]:
         """
-        对 Web 类告警做二次确认：如果匹配仅在 URL 路径部分而不在查询参数中，
-        则降级告警严重度（可能是误报）。
+        对 Web 类告警做上下文感知二次确认。
 
-        策略: 提取查询参数部分 → 若告警的匹配文本不在查询参数中，降为 low
+        过滤策略（多层降噪）:
+        1. 白名单 IP: 来自白名单 IP 的告警直接忽略
+        2. URL 路径匹配: 仅在路径不在查询参数中 → 降为 low
+        3. Referer 匹配: 仅在 Referer 头中 → 降为 low（可能是外部诱饵链接）
+        4. Cookie 匹配: 仅在 Cookie 中 → 降为 low（可能是正常 token）
+
+        Returns:
+            过滤后的告警列表
         """
         if not alerts:
             return alerts
 
-        http_uri = parsed.get('http_uri', '')
-        if not http_uri or '?' not in http_uri:
-            # 没有查询参数，无法区分，保持原样
-            return alerts
+        src_ip = parsed.get('src_ip', '')
 
-        query_part = http_uri.split('?', 1)[1].lower()
-        path_part = http_uri.split('?', 1)[0].lower()
+        # 提取 HTTP 头信息
+        headers = self._extract_http_headers(parsed)
+        referer = headers.get('referer', '').lower()
+        cookie = headers.get('cookie', '').lower()
+
+        http_uri = parsed.get('http_uri', '')
+        query_part = ''
+        path_part = http_uri.lower()
+        has_query = '?' in http_uri
+        if has_query:
+            query_part = http_uri.split('?', 1)[1].lower()
+            path_part = http_uri.split('?', 1)[0].lower()
 
         filtered = []
         for alert in alerts:
             cat = alert.get('category', '')
+
+            # 非 Web 类告警不参与上下文过滤
             if cat not in web_categories:
                 filtered.append(alert)
                 continue
 
+            # ── 1. 白名单 IP 直接跳过 ──
+            if src_ip in self._whitelist_ips:
+                logger.debug(
+                    f"白名单 IP {src_ip} 的告警已忽略: "
+                    f"{alert.get('signature_id', '?')}"
+                )
+                continue
+
+            alert = dict(alert)
             matched = alert.get('matched_text', '').lower()
-            if matched and matched not in query_part and matched in path_part:
-                # 匹配仅在路径中 → 可能是误报，降级
-                alert = dict(alert)
+            downgraded = False
+
+            # ── 2. 仅 URL 路径匹配 → 降级 ──
+            if (matched and has_query
+                    and matched not in query_part
+                    and matched in path_part):
                 alert['severity'] = 'low'
                 alert['description'] = (
-                    f"[低可信度-可能误报] {alert.get('description', '')} "
-                    f"(匹配位于URL路径而非查询参数)"
+                    f"[低可信度] {alert.get('description', '')} "
+                    f"(匹配位于URL路径: {path_part[:50]})"
                 )
+                downgraded = True
+
+            # ── 3. 仅 Referer 头匹配 → 降级 ──
+            if (matched and referer and matched in referer
+                    and not (query_part and matched in query_part)):
+                alert['severity'] = 'low'
+                alert['description'] = (
+                    f"[低可信度-Referer] {alert.get('description', '')} "
+                    f"(匹配位于Referer头而非请求参数)"
+                )
+                downgraded = True
+
+            # ── 4. 仅 Cookie 匹配 → 降级 ──
+            if (matched and cookie and matched in cookie
+                    and not (query_part and matched in query_part)
+                    and not (referer and matched in referer)):
+                alert['severity'] = 'low'
+                alert['description'] = (
+                    f"[低可信度-Cookie] {alert.get('description', '')} "
+                    f"(匹配位于Cookie而非请求参数)"
+                )
+                downgraded = True
+
             filtered.append(alert)
 
         return filtered
+
+    @staticmethod
+    def _extract_http_headers(parsed: Dict) -> Dict[str, str]:
+        """
+        从 HTTP 载荷中提取关键头部字段。
+
+        Returns:
+            dict with keys: 'referer', 'cookie', 'user_agent'
+        """
+        headers = {}
+        payload = parsed.get('payload', b'')
+        if not payload:
+            return headers
+
+        try:
+            text = payload.decode('utf-8', errors='ignore')
+            # 提取 HTTP 头部区域（\r\n\r\n 之前）
+            header_end = text.find('\r\n\r\n')
+            if header_end < 0:
+                header_end = text.find('\n\n')
+            header_section = text[:header_end] if header_end > 0 else text
+
+            for line in header_section.split('\r\n'):
+                if ':' not in line:
+                    continue
+                key, _, value = line.partition(':')
+                key_lower = key.strip().lower()
+                if key_lower in ('referer', 'cookie', 'user-agent'):
+                    headers[key_lower.replace('-', '_')] = value.strip()
+        except Exception:
+            pass
+
+        return headers
 
     def _match_ac(self, payload_lower: str, parsed: Dict) -> List[Dict]:
         """AC 自动机匹配"""

@@ -84,9 +84,19 @@ class IDSEngine:
         logger.info("[✓] TCP 流重组器")
 
         # 3. 误用检测引擎
-        sig_dir = self.config.get('signatures', {}).get('directory', './signatures')
+        sig_cfg = self.config.get('signatures', {})
+        sig_dir = sig_cfg.get('directory', './signatures')
         self.misuse_detector = SignatureMatcher(sig_dir)
         sig_count = self.misuse_detector.load_all()
+
+        # 配置白名单和内网范围（PDF 扩展：误报自动降噪）
+        whitelist = sig_cfg.get('whitelist_ips', [])
+        if whitelist:
+            self.misuse_detector.set_whitelist(whitelist)
+        internal_prefixes = sig_cfg.get('internal_prefixes', [])
+        if internal_prefixes:
+            self.misuse_detector.set_internal_ranges(internal_prefixes)
+
         logger.info(f"[✓] 误用检测引擎 ({sig_count} 条规则)")
 
         # 4. 异常检测引擎
@@ -215,6 +225,18 @@ class IDSEngine:
             **capture_status,
             'alerts_last_60s': alert_stats,
         }
+
+    def reload_signatures(self) -> int:
+        """
+        热更新特征库 — 不重启引擎即可加载最新规则。
+
+        Returns:
+            重新加载的规则数
+        """
+        logger.info("正在热更新特征库...")
+        count = self.misuse_detector.reload()
+        logger.info(f"特征库热更新完成: {count} 条规则")
+        return count
 
     def start_gui(self):
         """启动 GUI 界面"""
