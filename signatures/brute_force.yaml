@@ -12,11 +12,30 @@
   threshold:
     count: 5
     window: 60
+  flowbits:
+    set: [ssh_failed_attempt]      # 标记: 检测到 SSH 登录失败
+    track: by_src                  # 按源IP追踪
   patterns:
     - "Failed password"
     - "Authentication failed"
     - "Permission denied \\(publickey"
     - "Too many authentication failures"
+
+# --- SSH 暴力破解成功 (Flowbits联动: 先失败→后成功) ---
+- id: BRUTE-001-SUCCESS
+  name: "SSH Brute Force - SUCCESSFUL Login After Failures"
+  category: brute_force
+  severity: critical                # 升级为 critical
+  protocols: [SSH]
+  ports: [22]
+  flowbits:
+    require: [ssh_failed_attempt]   # 要求之前有登录失败
+    set: [ssh_compromised]          # 标记: SSH可能已被攻破
+    track: by_src
+  patterns:
+    - "Accepted password"
+    - "Accepted publickey"
+    - "session opened"
 
 # --- FTP 暴力破解 ---
 - id: BRUTE-002

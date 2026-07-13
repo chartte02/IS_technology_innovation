@@ -9,6 +9,7 @@ import os
 import time
 import yaml
 import logging
+from collections import defaultdict
 from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -21,18 +22,25 @@ class Signature:
 
     __slots__ = ('sig_id', 'name', 'category', 'severity',
                  'patterns', 'threshold', 'protocols', 'ports',
-                 'enabled')
+                 'flowbits', 'enabled')
 
     def __init__(self, raw: Dict[str, Any]):
         self.sig_id = raw.get('id', 'UNKNOWN')
         self.name = raw.get('name', 'Unknown Signature')
         self.category = raw.get('category', 'unknown')
-        self.severity = raw.get('severity', 'medium')  # critical/high/medium/low
+        self.severity = raw.get('severity', 'medium')
         self.patterns = raw.get('patterns', [])
         self.threshold = raw.get('threshold', None)
-        self.protocols = raw.get('protocols', None)  # 限定的协议列表
-        self.ports = raw.get('ports', None)           # 限定的端口列表
+        self.protocols = raw.get('protocols', None)
+        self.ports = raw.get('ports', None)
         self.enabled = raw.get('enabled', True)
+        # Flowbits: 跨规则状态传递 (Suricata 兼容)
+        fb = raw.get('flowbits', {}) or {}
+        self.flowbits = {
+            'set':     fb.get('set', []),       # 命中后设置的 flag
+            'require': fb.get('require', []),   # 需要前置规则已设置这些 flag
+            'track':   fb.get('track', 'by_src'),  # 追踪粒度: by_src/by_dst/both
+        }
 
     def to_dict(self) -> Dict:
         return {
@@ -79,6 +87,9 @@ class SignatureMatcher:
 
         # 阈值型规则的状态追踪: sig_id → {key: [timestamps]}
         self._threshold_states: Dict[str, Dict[str, List[float]]] = {}
+
+        # Flowbits 状态: flow_key → set(flag_names)  (跨规则状态传递)
+        self._flowbits_state: Dict[str, set] = defaultdict(set)
 
         # 白名单 IP（来自这些 IP 的告警直接忽略）
         self._whitelist_ips: set = set()
@@ -299,6 +310,9 @@ class SignatureMatcher:
         # Stage 3: 阈值型规则检查
         threshold_alerts = self._check_threshold_rules(parsed)
         alerts.extend(threshold_alerts)
+
+        # Stage 4: Flowbits 跨规则状态传递 (Suricata 兼容)
+        alerts = self._apply_flowbits(alerts, parsed)
 
         # 去重（同一条规则在一个包中只保留一条告警）
         alerts = self._deduplicate_alerts(alerts)
@@ -524,20 +538,16 @@ class SignatureMatcher:
         return alerts
 
     def _get_regex_candidates(self, port: int, proto: str) -> List[Tuple]:
-        """获取候选正则匹配器（按端口和协议筛选）"""
-        candidates = []
+        """获取候选正则匹配器（按端口和协议筛选 + 无限制规则全量）"""
+        candidates = list(self._regex_matchers)  # 包含所有无端口/协议限制的规则
 
-        # 端口匹配
+        # 端口匹配 — 额外加入端口专属规则
         if port in self._port_index:
             candidates.extend(self._port_index[port])
 
         # 协议匹配
         if proto in self._proto_index:
             candidates.extend(self._proto_index[proto])
-
-        # 如果没有索引命中，使用所有正则
-        if not candidates:
-            candidates = self._regex_matchers
 
         return candidates
 
@@ -612,6 +622,66 @@ class SignatureMatcher:
             return pattern.lower() in payload_str
         except Exception:
             return False
+
+    # ─── Flowbits 跨规则状态传递 (Suricata 兼容) ───
+
+    def _apply_flowbits(self, alerts: List[Dict], parsed: Dict) -> List[Dict]:
+        """
+        Stage 4: 跨规则状态传递。
+
+        流程:
+        1. 检查告警规则的 flowbits.require → 不满足则丢弃
+        2. 保留的告警，设置其 flowbits.set 标记
+
+        flow key 由 track 策略决定:
+          by_src → "{src_ip}"
+          by_dst → "{dst_ip}"
+          both   → "{src_ip}→{dst_ip}"
+        """
+        src_ip = parsed.get('src_ip', '')
+        dst_ip = parsed.get('dst_ip', '')
+        filtered = []
+        flags_to_set = []
+
+        for alert in alerts:
+            sig_id = alert.get('signature_id', '')
+            sig = self.get_signature_by_id(sig_id)
+            if sig is None:
+                filtered.append(alert)
+                continue
+
+            fb = sig.flowbits
+            require = fb.get('require', [])
+            set_flags = fb.get('set', [])
+            track = fb.get('track', 'by_src')
+            flow_key = self._get_flowbit_key(src_ip, dst_ip, track)
+
+            # 检查前置条件
+            active = self._flowbits_state.get(flow_key, set())
+            missing = [f for f in require if f not in active]
+            if missing:
+                logger.debug(f"Flowbits: {sig_id} 跳过, 缺少 {missing}")
+                continue
+
+            filtered.append(alert)
+            if set_flags:
+                flags_to_set.append((flow_key, set_flags))
+
+        # 统一设置 flags
+        for flow_key, flags in flags_to_set:
+            if flow_key not in self._flowbits_state:
+                self._flowbits_state[flow_key] = set()
+            self._flowbits_state[flow_key].update(flags)
+
+        return filtered
+
+    @staticmethod
+    def _get_flowbit_key(src_ip: str, dst_ip: str, track: str) -> str:
+        if track == 'by_dst':
+            return dst_ip
+        elif track == 'both':
+            return f"{src_ip}->{dst_ip}"
+        return src_ip  # by_src
 
     # ─── 告警构造 ───
 

@@ -32,10 +32,26 @@
   name: "Backdoor - Reverse Shell Command"
   category: backdoor
   severity: critical
+  flowbits:
+    set: [reverse_shell_detected]   # 标记: 检测到反弹Shell
+    track: by_src
   patterns:
     - "(?i)(bash|sh|nc|ncat|netcat)\\s+.*>/dev/tcp/"
     - "(?i)python\\s+-c\\s+['\"]import\\s+(socket|os|pty|subprocess)"
     - "(?i)exec\\s+[0-9]+<>/dev/tcp/"
+    - "(?i)(bash|sh)\\s+-i\\s+>&"
+
+# --- 攻击链: SSH被破 → 反弹Shell (Flowbits 联动, 确认入侵) ---
+- id: BACKDOOR-004-CHAIN
+  name: "ATTACK CHAIN: SSH Compromise → Reverse Shell (Confirmed Intrusion)"
+  category: backdoor
+  severity: critical
+  flowbits:
+    require: [ssh_compromised, reverse_shell_detected]  # 两步联动的证据链
+    track: by_src
+  patterns:
+    - "(?i)(bash|sh|nc|ncat|netcat)\\s+.*>/dev/tcp/"
+    - "(?i)python\\s+-c\\s+['\"]import\\s+(socket|os|pty|subprocess)"
     - "(?i)(bash|sh)\\s+-i\\s+>&"
 
 # --- C2 通信特征 ---
