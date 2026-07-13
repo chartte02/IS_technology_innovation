@@ -141,7 +141,6 @@ class PacketCapture:
             prn=self._on_packet,
             store=False,           # 不存储所有包以节省内存
             promisc=self.promiscuous,
-            snaplen=self.snaplen,
             timeout=self.timeout,
         )
         self._sniffer.start()
