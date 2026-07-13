@@ -1,0 +1,721 @@
+# ============================================================
+# 模块: TLS/SSL 加密流量异常检测器 (tls_detector.py)
+# 功能: JA3 指纹、TLS 握手异常和 X.509 证书异常检测
+# 负责人: 成员B
+# ============================================================
+
+import hashlib
+import ipaddress
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import yaml
+from cryptography import x509
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed25519, ed448, padding, rsa
+from cryptography.x509.oid import ExtensionOID, NameOID
+
+
+class TLSParseError(ValueError):
+    """TLS 数据格式不完整或不符合预期。"""
+
+
+class TLSDetector:
+    """TLS/SSL 指纹与握手异常检测器。"""
+
+    DEFAULT_MALICIOUS_JA3 = {
+        "6734f37431670b3ab4292b8f60f29984": {
+            "name": "Trickbot example fingerprint",
+            "family": "Trickbot",
+            "confidence": "medium",
+            "source": "https://github.com/salesforce/ja3",
+        },
+        "4d7a28d6f2263ed61de88ca66eb011e3": {
+            "name": "Emotet example fingerprint",
+            "family": "Emotet",
+            "confidence": "medium",
+            "source": "https://github.com/salesforce/ja3",
+        },
+        "72a589da586844d7f0818ce684948eea": {
+            "name": "Cobalt Strike/Metasploit Windows TLS client example",
+            "family": "Cobalt Strike or Meterpreter",
+            "confidence": "low",
+            "note": "May also match legitimate Windows SChannel clients; correlate with JA3S and flow context.",
+            "source": "https://engineering.salesforce.com/tls-fingerprinting-with-ja3-and-ja3s-247362855967/",
+        },
+    }
+
+    TLS_RECORD_HANDSHAKE = 22
+    TLS_RECORD_ALERT = 21
+    TLS_RECORD_APPLICATION_DATA = 23
+    HANDSHAKE_CLIENT_HELLO = 1
+    HANDSHAKE_SERVER_HELLO = 2
+    HANDSHAKE_CERTIFICATE = 11
+
+    VERSION_NAMES = {
+        0x0002: "SSLv2",
+        0x0300: "SSLv3",
+        0x0301: "TLSv1.0",
+        0x0302: "TLSv1.1",
+        0x0303: "TLSv1.2",
+        0x0304: "TLSv1.3",
+    }
+
+    WEAK_CIPHER_SUITES = {
+        0x0000: "TLS_NULL_WITH_NULL_NULL",
+        0x0001: "TLS_RSA_WITH_NULL_MD5",
+        0x0002: "TLS_RSA_WITH_NULL_SHA",
+        0x0003: "TLS_RSA_EXPORT_WITH_RC4_40_MD5",
+        0x0004: "TLS_RSA_WITH_RC4_128_MD5",
+        0x0005: "TLS_RSA_WITH_RC4_128_SHA",
+        0x0006: "TLS_RSA_EXPORT_WITH_RC2_CBC_40_MD5",
+        0x0008: "TLS_RSA_EXPORT_WITH_DES40_CBC_SHA",
+        0x0009: "TLS_RSA_WITH_DES_CBC_SHA",
+        0x000A: "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+        0x0011: "TLS_DHE_DSS_EXPORT_WITH_DES40_CBC_SHA",
+        0x0012: "TLS_DHE_DSS_WITH_DES_CBC_SHA",
+        0x0014: "TLS_DHE_RSA_EXPORT_WITH_DES40_CBC_SHA",
+        0x0015: "TLS_DHE_RSA_WITH_DES_CBC_SHA",
+        0x001B: "TLS_DH_anon_WITH_3DES_EDE_CBC_SHA",
+    }
+
+    _JA3_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+
+    def __init__(self, malicious_ja3_path: Optional[str] = None):
+        self.malicious_ja3: Dict[str, Dict[str, Any]] = {
+            fingerprint: dict(metadata)
+            for fingerprint, metadata in self.DEFAULT_MALICIOUS_JA3.items()
+        }
+        if malicious_ja3_path:
+            self.load_malicious_ja3_db(malicious_ja3_path)
+
+    def extract_ja3(self, tls_client_hello: bytes) -> str:
+        """从 TLS ClientHello 提取 JA3 MD5 指纹。"""
+        return self.analyze_client_hello(tls_client_hello)["ja3"]
+
+    def analyze_client_hello(self, tls_client_hello: bytes) -> Dict[str, Any]:
+        """
+        解析 ClientHello 并生成 JA3 指纹和异常项。
+
+        Args:
+            tls_client_hello: 完整 TLS record、Handshake 消息或 ClientHello 消息体。
+
+        Returns:
+            包含 JA3、SNI、版本、密码套件和异常项的字典。
+
+        Raises:
+            TLSParseError: 数据截断或不是 ClientHello。
+        """
+        body = self._extract_handshake_body(tls_client_hello, self.HANDSHAKE_CLIENT_HELLO)
+        parsed = self._parse_client_hello_body(body)
+
+        ja3_string = ",".join([
+            str(parsed["legacy_version"]),
+            "-".join(str(value) for value in parsed["ja3_ciphers"]),
+            "-".join(str(value) for value in parsed["ja3_extensions"]),
+            "-".join(str(value) for value in parsed["supported_groups"]),
+            "-".join(str(value) for value in parsed["ec_point_formats"]),
+        ])
+        ja3 = hashlib.md5(ja3_string.encode("ascii"), usedforsecurity=False).hexdigest()
+
+        anomalies: List[Dict[str, str]] = []
+        effective_version = max(parsed["supported_versions"] or [parsed["legacy_version"]])
+        if effective_version < 0x0303:
+            anomalies.append(self._anomaly(
+                "legacy_tls_version",
+                "medium",
+                f"客户端最高仅支持 {self._version_name(effective_version)}",
+            ))
+
+        weak_ciphers = [
+            self.WEAK_CIPHER_SUITES[value]
+            for value in parsed["ciphers"]
+            if value in self.WEAK_CIPHER_SUITES
+        ]
+        if weak_ciphers:
+            anomalies.append(self._anomaly(
+                "weak_cipher_suite",
+                "high",
+                "客户端提供弱密码套件: " + ", ".join(weak_ciphers),
+            ))
+
+        malicious = self.lookup_ja3(ja3)
+        if malicious:
+            label = malicious.get("name") or malicious.get("label") or "known malicious fingerprint"
+            anomalies.append(self._anomaly(
+                "malicious_ja3",
+                "high",
+                f"JA3 命中恶意指纹库: {label}",
+            ))
+
+        return {
+            "message_type": "client_hello",
+            "legacy_version": parsed["legacy_version"],
+            "legacy_version_name": self._version_name(parsed["legacy_version"]),
+            "supported_versions": parsed["supported_versions"],
+            "supported_version_names": [
+                self._version_name(value) for value in parsed["supported_versions"]
+            ],
+            "sni": parsed["sni"],
+            "cipher_suites": parsed["ciphers"],
+            "extension_types": parsed["extensions"],
+            "supported_groups": parsed["supported_groups"],
+            "ec_point_formats": parsed["ec_point_formats"],
+            "ja3_string": ja3_string,
+            "ja3": ja3,
+            "malicious_ja3": malicious,
+            "anomalies": anomalies,
+            "is_anomalous": bool(anomalies),
+        }
+
+    def analyze_server_hello(self, tls_server_hello: bytes) -> Dict[str, Any]:
+        """解析 ServerHello，检查协商版本与弱密码套件。"""
+        body = self._extract_handshake_body(tls_server_hello, self.HANDSHAKE_SERVER_HELLO)
+        offset = 0
+        legacy_version, offset = self._read_u16(body, offset)
+        _, offset = self._read(body, offset, 32)
+        session_len, offset = self._read_u8(body, offset)
+        _, offset = self._read(body, offset, session_len)
+        cipher_suite, offset = self._read_u16(body, offset)
+        _, offset = self._read_u8(body, offset)
+
+        extensions: Dict[int, bytes] = {}
+        if offset < len(body):
+            ext_len, offset = self._read_u16(body, offset)
+            ext_bytes, offset = self._read(body, offset, ext_len)
+            extensions = dict(self._parse_extensions(ext_bytes))
+
+        selected_version = legacy_version
+        supported_versions = extensions.get(43)
+        if supported_versions:
+            selected_version, _ = self._read_u16(supported_versions, 0)
+
+        anomalies: List[Dict[str, str]] = []
+        if selected_version < 0x0303:
+            anomalies.append(self._anomaly(
+                "legacy_tls_version",
+                "medium",
+                f"服务器协商了 {self._version_name(selected_version)}",
+            ))
+        if cipher_suite in self.WEAK_CIPHER_SUITES:
+            anomalies.append(self._anomaly(
+                "weak_cipher_suite",
+                "high",
+                "服务器选择弱密码套件: " + self.WEAK_CIPHER_SUITES[cipher_suite],
+            ))
+
+        return {
+            "message_type": "server_hello",
+            "legacy_version": legacy_version,
+            "selected_version": selected_version,
+            "selected_version_name": self._version_name(selected_version),
+            "cipher_suite": cipher_suite,
+            "cipher_suite_name": self.WEAK_CIPHER_SUITES.get(cipher_suite),
+            "anomalies": anomalies,
+            "is_anomalous": bool(anomalies),
+        }
+
+    def check_certificate(
+        self,
+        tls_handshake: bytes,
+        hostname: Optional[str] = None,
+        cipher_suite: Optional[int] = None,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        检查首张 X.509 证书的自签名、有效期、主机名和弱算法。
+
+        Args:
+            tls_handshake: DER 证书、TLS 1.2/1.3 Certificate Handshake 或 TLS record。
+            hostname: 可选的预期主机名。
+            cipher_suite: 可选的已协商密码套件编号。
+            now: 可选的检查时间，默认使用当前 UTC 时间。
+        """
+        der = self._extract_first_certificate(tls_handshake)
+        certificate = x509.load_der_x509_certificate(der)
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+
+        not_before = certificate.not_valid_before_utc
+        not_after = certificate.not_valid_after_utc
+        anomalies: List[Dict[str, str]] = []
+
+        self_signed = self._is_self_signed(certificate)
+        if self_signed:
+            anomalies.append(self._anomaly(
+                "self_signed_certificate",
+                "high",
+                "证书由自身签发且签名可由自身公钥验证",
+            ))
+        if current_time < not_before:
+            anomalies.append(self._anomaly(
+                "certificate_not_yet_valid",
+                "high",
+                f"证书尚未生效: {not_before.isoformat()}",
+            ))
+        if current_time > not_after:
+            anomalies.append(self._anomaly(
+                "expired_certificate",
+                "high",
+                f"证书已过期: {not_after.isoformat()}",
+            ))
+
+        signature_hash = certificate.signature_hash_algorithm
+        signature_hash_name = signature_hash.name.lower() if signature_hash else None
+        if signature_hash_name in {"md5", "sha1"}:
+            anomalies.append(self._anomaly(
+                "weak_signature_algorithm",
+                "high" if signature_hash_name == "md5" else "medium",
+                f"证书使用弱签名哈希: {signature_hash_name}",
+            ))
+
+        public_key = certificate.public_key()
+        key_type = type(public_key).__name__
+        key_size = getattr(public_key, "key_size", None)
+        if isinstance(public_key, rsa.RSAPublicKey) and key_size is not None and key_size < 2048:
+            anomalies.append(self._anomaly(
+                "weak_public_key",
+                "high",
+                f"RSA 公钥长度仅 {key_size} 位",
+            ))
+        elif isinstance(public_key, ec.EllipticCurvePublicKey) and key_size is not None and key_size < 224:
+            anomalies.append(self._anomaly(
+                "weak_public_key",
+                "high",
+                f"EC 公钥长度仅 {key_size} 位",
+            ))
+
+        hostname_matches: Optional[bool] = None
+        if hostname:
+            hostname_matches = self._certificate_matches_hostname(certificate, hostname)
+            if not hostname_matches:
+                anomalies.append(self._anomaly(
+                    "hostname_mismatch",
+                    "high",
+                    f"证书名称与主机名 {hostname} 不匹配",
+                ))
+
+        if cipher_suite in self.WEAK_CIPHER_SUITES:
+            anomalies.append(self._anomaly(
+                "weak_cipher_suite",
+                "high",
+                "连接协商了弱密码套件: " + self.WEAK_CIPHER_SUITES[cipher_suite],
+            ))
+
+        dns_names, ip_addresses = self._certificate_names(certificate)
+        return {
+            "message_type": "certificate",
+            "subject": certificate.subject.rfc4514_string(),
+            "issuer": certificate.issuer.rfc4514_string(),
+            "serial_number": str(certificate.serial_number),
+            "not_before": not_before.isoformat(),
+            "not_after": not_after.isoformat(),
+            "dns_names": dns_names,
+            "ip_addresses": ip_addresses,
+            "signature_hash": signature_hash_name,
+            "public_key_type": key_type,
+            "public_key_size": key_size,
+            "self_signed": self_signed,
+            "hostname": hostname,
+            "hostname_matches": hostname_matches,
+            "cipher_suite": cipher_suite,
+            "anomalies": anomalies,
+            "is_anomalous": bool(anomalies),
+        }
+
+    def analyze_tls_payload(
+        self,
+        payload: bytes,
+        hostname: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """识别单个 TLS record，并对可见握手消息执行对应分析。"""
+        if len(payload) < 5:
+            raise TLSParseError("TLS record header is truncated")
+
+        record_type = payload[0]
+        record_version = int.from_bytes(payload[1:3], "big")
+        record_length = int.from_bytes(payload[3:5], "big")
+        if len(payload) < 5 + record_length:
+            raise TLSParseError("TLS record payload is truncated")
+
+        result: Dict[str, Any] = {
+            "record_type": record_type,
+            "record_version": record_version,
+            "record_version_name": self._version_name(record_version),
+            "record_length": record_length,
+            "message_type": "record",
+            "anomalies": [],
+            "is_anomalous": False,
+        }
+
+        if record_type != self.TLS_RECORD_HANDSHAKE or record_length == 0:
+            return result
+
+        handshake_type = payload[5]
+        if handshake_type == self.HANDSHAKE_CLIENT_HELLO:
+            return self.analyze_client_hello(payload)
+        if handshake_type == self.HANDSHAKE_SERVER_HELLO:
+            return self.analyze_server_hello(payload)
+        if handshake_type == self.HANDSHAKE_CERTIFICATE:
+            return self.check_certificate(payload, hostname=hostname)
+
+        result["handshake_type"] = handshake_type
+        return result
+
+    def load_malicious_ja3_db(self, db_path: str) -> int:
+        """从 JSON、YAML 或文本文件加载恶意 JA3 指纹库。"""
+        path = Path(db_path)
+        if not path.exists():
+            raise FileNotFoundError(f"JA3 database not found: {db_path}")
+
+        if path.suffix.lower() == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+            entries = self._normalise_ja3_data(data)
+        elif path.suffix.lower() in {".yaml", ".yml"}:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            entries = self._normalise_ja3_data(data)
+        else:
+            entries = self._parse_ja3_text(path.read_text(encoding="utf-8"))
+
+        self.malicious_ja3.update(entries)
+        return len(entries)
+
+    def lookup_ja3(self, ja3: str) -> Optional[Dict[str, Any]]:
+        """查询 JA3 是否命中本地恶意指纹库。"""
+        value = self.malicious_ja3.get(ja3.lower())
+        return dict(value) if value else None
+
+    def _parse_client_hello_body(self, body: bytes) -> Dict[str, Any]:
+        offset = 0
+        legacy_version, offset = self._read_u16(body, offset)
+        _, offset = self._read(body, offset, 32)
+        session_len, offset = self._read_u8(body, offset)
+        _, offset = self._read(body, offset, session_len)
+
+        cipher_len, offset = self._read_u16(body, offset)
+        cipher_bytes, offset = self._read(body, offset, cipher_len)
+        if cipher_len % 2:
+            raise TLSParseError("cipher suite vector length must be even")
+        ciphers = [int.from_bytes(cipher_bytes[i:i + 2], "big") for i in range(0, cipher_len, 2)]
+
+        compression_len, offset = self._read_u8(body, offset)
+        _, offset = self._read(body, offset, compression_len)
+
+        extension_pairs: List[Tuple[int, bytes]] = []
+        if offset < len(body):
+            extension_len, offset = self._read_u16(body, offset)
+            extension_bytes, offset = self._read(body, offset, extension_len)
+            extension_pairs = self._parse_extensions(extension_bytes)
+
+        extensions = [extension_type for extension_type, _ in extension_pairs]
+        extension_map = dict(extension_pairs)
+        supported_groups = self._parse_u16_vector(extension_map.get(10), length_size=2)
+        ec_point_formats = self._parse_u8_vector(extension_map.get(11))
+        supported_versions = self._parse_u16_vector(extension_map.get(43), length_size=1)
+        sni = self._parse_sni(extension_map.get(0))
+
+        return {
+            "legacy_version": legacy_version,
+            "ciphers": ciphers,
+            "extensions": extensions,
+            "supported_groups": [value for value in supported_groups if not self._is_grease(value)],
+            "ec_point_formats": ec_point_formats,
+            "supported_versions": [value for value in supported_versions if not self._is_grease(value)],
+            "sni": sni,
+            "ja3_ciphers": [value for value in ciphers if not self._is_grease(value)],
+            "ja3_extensions": [value for value in extensions if not self._is_grease(value)],
+        }
+
+    @staticmethod
+    def _parse_extensions(data: bytes) -> List[Tuple[int, bytes]]:
+        pairs: List[Tuple[int, bytes]] = []
+        offset = 0
+        while offset < len(data):
+            extension_type, offset = TLSDetector._read_u16(data, offset)
+            extension_len, offset = TLSDetector._read_u16(data, offset)
+            extension_data, offset = TLSDetector._read(data, offset, extension_len)
+            pairs.append((extension_type, extension_data))
+        return pairs
+
+    @staticmethod
+    def _parse_u16_vector(data: Optional[bytes], length_size: int) -> List[int]:
+        if not data:
+            return []
+        offset = 0
+        if length_size == 1:
+            vector_len, offset = TLSDetector._read_u8(data, offset)
+        else:
+            vector_len, offset = TLSDetector._read_u16(data, offset)
+        vector, _ = TLSDetector._read(data, offset, vector_len)
+        if len(vector) % 2:
+            raise TLSParseError("uint16 vector length must be even")
+        return [int.from_bytes(vector[i:i + 2], "big") for i in range(0, len(vector), 2)]
+
+    @staticmethod
+    def _parse_u8_vector(data: Optional[bytes]) -> List[int]:
+        if not data:
+            return []
+        vector_len, offset = TLSDetector._read_u8(data, 0)
+        vector, _ = TLSDetector._read(data, offset, vector_len)
+        return list(vector)
+
+    @staticmethod
+    def _parse_sni(data: Optional[bytes]) -> Optional[str]:
+        if not data:
+            return None
+        list_len, offset = TLSDetector._read_u16(data, 0)
+        end = offset + list_len
+        while offset < end:
+            name_type, offset = TLSDetector._read_u8(data, offset)
+            name_len, offset = TLSDetector._read_u16(data, offset)
+            name, offset = TLSDetector._read(data, offset, name_len)
+            if name_type == 0:
+                try:
+                    return name.decode("idna")
+                except UnicodeError:
+                    return name.decode("ascii", errors="replace")
+        return None
+
+    @staticmethod
+    def _extract_handshake_body(data: bytes, expected_type: int) -> bytes:
+        if not isinstance(data, bytes):
+            data = bytes(data)
+        if len(data) >= 5 and data[0] in {20, 21, 22, 23, 24}:
+            record_offset = 0
+            while record_offset + 5 <= len(data):
+                record_type = data[record_offset]
+                record_len = int.from_bytes(data[record_offset + 3:record_offset + 5], "big")
+                record_end = record_offset + 5 + record_len
+                if record_end > len(data):
+                    raise TLSParseError("TLS record is truncated")
+                record_body = data[record_offset + 5:record_end]
+
+                if record_type == TLSDetector.TLS_RECORD_HANDSHAKE:
+                    handshake_offset = 0
+                    while handshake_offset + 4 <= len(record_body):
+                        handshake_type = record_body[handshake_offset]
+                        handshake_len = int.from_bytes(
+                            record_body[handshake_offset + 1:handshake_offset + 4], "big"
+                        )
+                        handshake_end = handshake_offset + 4 + handshake_len
+                        if handshake_end > len(record_body):
+                            raise TLSParseError("TLS handshake is truncated")
+                        if handshake_type == expected_type:
+                            return record_body[handshake_offset + 4:handshake_end]
+                        handshake_offset = handshake_end
+                record_offset = record_end
+
+            raise TLSParseError(f"expected handshake type {expected_type}")
+
+        if len(data) >= 4 and data[0] == expected_type:
+            handshake_len = int.from_bytes(data[1:4], "big")
+            if len(data) < 4 + handshake_len:
+                raise TLSParseError("TLS handshake is truncated")
+            return data[4:4 + handshake_len]
+
+        if expected_type in {TLSDetector.HANDSHAKE_CLIENT_HELLO, TLSDetector.HANDSHAKE_SERVER_HELLO}:
+            return data
+        raise TLSParseError(f"expected handshake type {expected_type}")
+
+    @staticmethod
+    def _extract_first_certificate(data: bytes) -> bytes:
+        if not isinstance(data, bytes):
+            data = bytes(data)
+        if data.startswith(b"\x30"):
+            return data
+
+        body = TLSDetector._extract_handshake_body(data, TLSDetector.HANDSHAKE_CERTIFICATE)
+
+        # TLS 1.2 Certificate: certificate_list<0..2^24-1>
+        if len(body) >= 6:
+            list_len = int.from_bytes(body[0:3], "big")
+            cert_len = int.from_bytes(body[3:6], "big")
+            if list_len >= cert_len + 3 and len(body) >= 6 + cert_len:
+                certificate = body[6:6 + cert_len]
+                if certificate.startswith(b"\x30"):
+                    return certificate
+
+        # TLS 1.3 Certificate: context<0..255>, certificate_list<0..2^24-1>
+        if body:
+            context_len = body[0]
+            offset = 1 + context_len
+            if len(body) >= offset + 6:
+                list_len = int.from_bytes(body[offset:offset + 3], "big")
+                offset += 3
+                cert_len = int.from_bytes(body[offset:offset + 3], "big")
+                offset += 3
+                if list_len >= cert_len + 5 and len(body) >= offset + cert_len:
+                    certificate = body[offset:offset + cert_len]
+                    if certificate.startswith(b"\x30"):
+                        return certificate
+
+        raise TLSParseError("no X.509 certificate found in TLS Certificate message")
+
+    @staticmethod
+    def _is_self_signed(certificate: x509.Certificate) -> bool:
+        if certificate.issuer != certificate.subject:
+            return False
+        public_key = certificate.public_key()
+        try:
+            if isinstance(public_key, rsa.RSAPublicKey):
+                signature_padding = certificate.signature_algorithm_parameters
+                if not isinstance(signature_padding, padding.AsymmetricPadding):
+                    signature_padding = padding.PKCS1v15()
+                public_key.verify(
+                    certificate.signature,
+                    certificate.tbs_certificate_bytes,
+                    signature_padding,
+                    certificate.signature_hash_algorithm,
+                )
+            elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                algorithm = certificate.signature_algorithm_parameters
+                if not isinstance(algorithm, ec.ECDSA):
+                    algorithm = ec.ECDSA(certificate.signature_hash_algorithm)
+                public_key.verify(certificate.signature, certificate.tbs_certificate_bytes, algorithm)
+            elif isinstance(public_key, dsa.DSAPublicKey):
+                public_key.verify(
+                    certificate.signature,
+                    certificate.tbs_certificate_bytes,
+                    certificate.signature_hash_algorithm,
+                )
+            elif isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+                public_key.verify(certificate.signature, certificate.tbs_certificate_bytes)
+            else:
+                return False
+            return True
+        except (InvalidSignature, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _certificate_names(certificate: x509.Certificate) -> Tuple[List[str], List[str]]:
+        dns_names: List[str] = []
+        ip_addresses: List[str] = []
+        try:
+            san = certificate.extensions.get_extension_for_oid(
+                ExtensionOID.SUBJECT_ALTERNATIVE_NAME
+            ).value
+            dns_names = list(san.get_values_for_type(x509.DNSName))
+            ip_addresses = [str(value) for value in san.get_values_for_type(x509.IPAddress)]
+        except x509.ExtensionNotFound:
+            pass
+        return dns_names, ip_addresses
+
+    @staticmethod
+    def _certificate_matches_hostname(certificate: x509.Certificate, hostname: str) -> bool:
+        dns_names, ip_addresses = TLSDetector._certificate_names(certificate)
+        try:
+            expected_ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            expected_ip = None
+
+        if expected_ip is not None:
+            return any(ipaddress.ip_address(value) == expected_ip for value in ip_addresses)
+
+        if not dns_names:
+            dns_names = [
+                attribute.value
+                for attribute in certificate.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+            ]
+        expected_name = TLSDetector._normalise_dns_name(hostname)
+        return any(
+            TLSDetector._dnsname_matches(pattern, expected_name)
+            for pattern in dns_names
+        )
+
+    @staticmethod
+    def _dnsname_matches(pattern: str, hostname: str) -> bool:
+        candidate = TLSDetector._normalise_dns_name(pattern)
+        if "*" not in candidate:
+            return candidate == hostname
+        if not candidate.startswith("*.") or candidate.count("*") != 1:
+            return False
+        suffix = candidate[1:]
+        return hostname.endswith(suffix) and hostname.count(".") == candidate.count(".")
+
+    @staticmethod
+    def _normalise_dns_name(value: str) -> str:
+        value = value.rstrip(".").lower()
+        try:
+            return value.encode("idna").decode("ascii")
+        except UnicodeError:
+            return value
+
+    @staticmethod
+    def _normalise_ja3_data(data: Any) -> Dict[str, Dict[str, Any]]:
+        entries: Dict[str, Dict[str, Any]] = {}
+        if isinstance(data, dict):
+            iterable = []
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    item = dict(value)
+                    item.setdefault("ja3", key)
+                else:
+                    item = {"ja3": key, "name": str(value)}
+                iterable.append(item)
+        elif isinstance(data, list):
+            iterable = data
+        else:
+            raise ValueError("JA3 database must contain a mapping or list")
+
+        for item in iterable:
+            if isinstance(item, str):
+                item = {"ja3": item}
+            if not isinstance(item, dict):
+                continue
+            fingerprint = str(
+                item.get("ja3") or item.get("md5") or item.get("hash") or ""
+            ).lower()
+            if TLSDetector._JA3_RE.fullmatch(fingerprint):
+                metadata = dict(item)
+                metadata["ja3"] = fingerprint
+                entries[fingerprint] = metadata
+        return entries
+
+    @staticmethod
+    def _parse_ja3_text(text: str) -> Dict[str, Dict[str, Any]]:
+        entries: Dict[str, Dict[str, Any]] = {}
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = re.split(r"[,\t ]+", line, maxsplit=1)
+            fingerprint = parts[0].lower()
+            if TLSDetector._JA3_RE.fullmatch(fingerprint):
+                entries[fingerprint] = {
+                    "ja3": fingerprint,
+                    "name": parts[1].strip() if len(parts) > 1 else "",
+                }
+        return entries
+
+    @staticmethod
+    def _is_grease(value: int) -> bool:
+        return (value & 0x0F0F) == 0x0A0A and (value >> 8) == (value & 0xFF)
+
+    @staticmethod
+    def _version_name(value: int) -> str:
+        return TLSDetector.VERSION_NAMES.get(value, f"0x{value:04x}")
+
+    @staticmethod
+    def _anomaly(code: str, severity: str, message: str) -> Dict[str, str]:
+        return {"code": code, "severity": severity, "message": message}
+
+    @staticmethod
+    def _read(data: bytes, offset: int, length: int) -> Tuple[bytes, int]:
+        end = offset + length
+        if length < 0 or end > len(data):
+            raise TLSParseError("TLS structure is truncated")
+        return data[offset:end], end
+
+    @staticmethod
+    def _read_u8(data: bytes, offset: int) -> Tuple[int, int]:
+        value, offset = TLSDetector._read(data, offset, 1)
+        return value[0], offset
+
+    @staticmethod
+    def _read_u16(data: bytes, offset: int) -> Tuple[int, int]:
+        value, offset = TLSDetector._read(data, offset, 2)
+        return int.from_bytes(value, "big"), offset

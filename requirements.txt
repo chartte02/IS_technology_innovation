@@ -5,6 +5,7 @@
 
 # --- 网络数据包捕获 ---
 scapy>=2.5.0              # 数据包捕获与分析（原型开发）
+cryptography>=42.0.0      # X.509 证书解析与 TLS 证书异常检测
 # python-libpcap           # Linux 高性能抓包（可选，替代 Scapy）
 
 # --- 模式匹配 ---
