@@ -200,11 +200,29 @@ class IDSEngine:
         app_proto = parsed.get('app_protocol')
         if app_proto and hasattr(app_proto, 'value') and app_proto.value in ('HTTPS', 'TLS'):
             try:
-                tls_alerts = self.tls_detector.analyze(packet, parsed)
-                if tls_alerts:
-                    self.alert_mgr.submit_batch(tls_alerts, source='tls')
+                payload = parsed.get('payload', b'')
+                if payload:
+                    # 尝试 ClientHello 分析 (JA3 指纹)
+                    result = self.tls_detector.analyze_client_hello(payload)
+                    if result.get('is_anomalous'):
+                        for anom in result.get('anomalies', []):
+                            self.alert_mgr.submit({
+                                'signature_id': f"TLS-{anom.get('type','?')}",
+                                'signature_name': f"TLS Anomaly: {anom.get('desc','')}",
+                                'type': 'tls_anomaly',
+                                'category': 'backdoor',
+                                'severity': anom.get('severity', 'medium'),
+                                'description': anom.get('desc', ''),
+                                'src_ip': parsed.get('src_ip', ''),
+                                'dst_ip': parsed.get('dst_ip', ''),
+                                'src_port': parsed.get('src_port', 0),
+                                'dst_port': parsed.get('dst_port', 0),
+                                'timestamp': parsed.get('timestamp', time.time()),
+                                'detail': {'ja3': result.get('ja3', ''),
+                                           'sni': result.get('sni', '')},
+                            }, source='tls')
             except Exception:
-                pass  # TLS 解析失败不影响主流程
+                pass  # 非 ClientHello 消息则跳过
         self._perf_stats['tls']['total'] += time.perf_counter() - t0
         self._perf_stats['tls']['count'] += 1
 
