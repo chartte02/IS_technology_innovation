@@ -9,6 +9,7 @@
   severity: critical
   protocols: [HTTP]
   ports: [80, 443, 8080, 8443]
+  match_position: uri         # 仅在URI中检测（对标Suricata http_uri）
   patterns:
     - "(?i)union\\s+(all\\s+)?select\\s+"
     - "(?i)union\\s+(all\\s+)?select.*from"

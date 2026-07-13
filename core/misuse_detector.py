@@ -22,7 +22,7 @@ class Signature:
 
     __slots__ = ('sig_id', 'name', 'category', 'severity',
                  'patterns', 'threshold', 'protocols', 'ports',
-                 'flowbits', 'enabled')
+                 'flowbits', 'match_position', 'enabled')
 
     def __init__(self, raw: Dict[str, Any]):
         self.sig_id = raw.get('id', 'UNKNOWN')
@@ -34,12 +34,14 @@ class Signature:
         self.protocols = raw.get('protocols', None)
         self.ports = raw.get('ports', None)
         self.enabled = raw.get('enabled', True)
+        # Content 位置限定: uri | body | header | any (对标 Suricata http_uri/http_client_body)
+        self.match_position = raw.get('match_position', 'any')
         # Flowbits: 跨规则状态传递 (Suricata 兼容)
         fb = raw.get('flowbits', {}) or {}
         self.flowbits = {
-            'set':     fb.get('set', []),       # 命中后设置的 flag
-            'require': fb.get('require', []),   # 需要前置规则已设置这些 flag
-            'track':   fb.get('track', 'by_src'),  # 追踪粒度: by_src/by_dst/both
+            'set':     fb.get('set', []),
+            'require': fb.get('require', []),
+            'track':   fb.get('track', 'by_src'),
         }
 
     def to_dict(self) -> Dict:
@@ -284,10 +286,8 @@ class SignatureMatcher:
         payload_str = payload.decode('utf-8', errors='ignore')
         payload_lower = payload_str.lower()
 
-        # 上下文过滤：HTTP 请求的 Web 攻击特征仅检测查询参数部分
-        # 避免路径中包含 "select" "/etc/" 等正常词汇触发误报
-        web_payload_str, web_payload_lower = self._extract_web_context(
-            parsed, payload_str, payload_lower)
+        # HTTP 位置提取 (Content 位置限定)
+        http_positions = self._extract_http_positions(payload_str)
 
         # Stage 1: AC 自动机匹配（字符串特征）— 全文匹配
         web_categories = {'sql_injection', 'xss', 'web_attack', 'webshell'}
@@ -313,6 +313,9 @@ class SignatureMatcher:
 
         # Stage 4: Flowbits 跨规则状态传递 (Suricata 兼容)
         alerts = self._apply_flowbits(alerts, parsed)
+
+        # Stage 5: Content 位置限定过滤
+        alerts = self._filter_by_position(alerts, http_positions)
 
         # 去重（同一条规则在一个包中只保留一条告警）
         alerts = self._deduplicate_alerts(alerts)
@@ -568,7 +571,14 @@ class SignatureMatcher:
 
             # 该包的 pattern 命中了阈值规则的触发条件
             sig_key = sig.sig_id
-            flow_key = f"{src_ip}→{dst_ip}:{port}"
+            # track 策略: by_src→按源IP, by_dst→按目标IP, both→按src→dst:port
+            track = sig.threshold.get('track', 'both')
+            if track == 'by_src':
+                flow_key = src_ip
+            elif track == 'by_dst':
+                flow_key = dst_ip
+            else:  # both (default, backward compatible)
+                flow_key = f"{src_ip}->{dst_ip}:{port}"
 
             if sig_key not in self._threshold_states:
                 self._threshold_states[sig_key] = {}
@@ -682,6 +692,63 @@ class SignatureMatcher:
         elif track == 'both':
             return f"{src_ip}->{dst_ip}"
         return src_ip  # by_src
+
+    # ─── Content 位置限定 (Suricata 兼容) ───
+
+    @staticmethod
+    def _extract_http_positions(payload_str: str) -> Dict[str, str]:
+        """从HTTP载荷中提取URI/Header/Body三个区域"""
+        positions = {'uri': '', 'header': '', 'body': ''}
+        try:
+            lines = payload_str.split('\r\n')
+            if not lines:
+                return positions
+            # Request line → URI
+            parts = lines[0].split(' ')
+            if len(parts) >= 2:
+                positions['uri'] = parts[1]
+            # Headers
+            header_end = 0
+            for i, line in enumerate(lines[1:], 1):
+                if line == '':
+                    header_end = i
+                    break
+            positions['header'] = '\r\n'.join(lines[1:header_end]) if header_end else ''
+            # Body
+            if header_end and header_end + 1 < len(lines):
+                positions['body'] = '\r\n'.join(lines[header_end + 1:])
+        except Exception:
+            pass
+        return positions
+
+    def _filter_by_position(self, alerts: List[Dict],
+                             http_positions: Dict[str, str]) -> List[Dict]:
+        """
+        Stage 5: Content 位置限定。如果规则指定了 match_position，
+        则检查匹配文本是否在指定区域内。
+        """
+        if not alerts or not any(http_positions.values()):
+            return alerts
+
+        filtered = []
+        for alert in alerts:
+            sig_id = alert.get('signature_id', '')
+            sig = self.get_signature_by_id(sig_id)
+            if sig is None or sig.match_position == 'any':
+                filtered.append(alert)
+                continue
+
+            pos = sig.match_position
+            pos_text = http_positions.get(pos, '')
+            matched = alert.get('matched_text', '')
+            if pos_text and matched.lower() not in pos_text.lower():
+                logger.debug(
+                    f"PosFilter: {sig_id} 跳过, 匹配不在 {pos} 区域"
+                )
+                continue
+            filtered.append(alert)
+
+        return filtered
 
     # ─── 告警构造 ───
 
