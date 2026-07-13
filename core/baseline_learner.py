@@ -86,7 +86,7 @@ class BaselineLearner:
         learner.save_baseline('baseline.json')
     """
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: Dict = None):#type: ignore
         cfg = config or {}
         self.default_learning_duration = cfg.get(
             'baseline_learning_period', 3600)
@@ -123,7 +123,7 @@ class BaselineLearner:
 
     # ─── 学习控制 ───
 
-    def start_learning(self, duration: float = None):
+    def start_learning(self, duration: float = None):#type: ignore
         """
         开始基线学习
 

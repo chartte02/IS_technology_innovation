@@ -92,7 +92,7 @@ class AnomalyDetector:
         alerts = detector.check_all()
     """
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: Dict = None): #type: ignore
         # ─── 配置 ───
         cfg = config or {}
         self.time_window = cfg.get('time_window', 60)          # 统计窗口（秒）
@@ -114,7 +114,7 @@ class AnomalyDetector:
 
         # ─── 状态 ───
         # IP → HostStats（按窗口分桶）
-        self._stats: Dict[str, HostStats] = defaultdict(HostStats)
+        self._stats: Dict[str, HostStats] = defaultdict(HostStats) #type: ignore
         self._lock = threading.RLock()
 
         # 基线
@@ -496,14 +496,14 @@ class AnomalyDetector:
                     self.window_start = time.time()
                 logger.debug(f"异常检测窗口已重置 ({time.time():.0f})")
 
-    def add_whitelist(self, ip: str = None, port: int = None):
+    def add_whitelist(self, ip: str = None, port: int = None):#type: ignore
         """添加白名单"""
         if ip:
             self.whitelist_ips.add(ip)
         if port:
             self.whitelist_ports.add(port)
 
-    def remove_whitelist(self, ip: str = None, port: int = None):
+    def remove_whitelist(self, ip: str = None, port: int = None):#type: ignore
         """移除白名单"""
         if ip:
             self.whitelist_ips.discard(ip)

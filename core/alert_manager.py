@@ -207,8 +207,8 @@ class AlertManager:
     # ─── 告警查询 ───
 
     def get_alerts(self, limit: int = 100,
-                   severity: str = None,
-                   category: str = None) -> List[Alert]:
+                   severity: str = None, #type: ignore
+                   category: str = None) -> List[Alert]: #type: ignore
         """获取告警列表（支持筛选）"""
         with self._lock:
             results = self.alerts
