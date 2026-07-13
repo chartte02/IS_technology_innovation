@@ -98,6 +98,67 @@
     - "(?i)/uploader\\.php"
     - "(?i)/adminer\\.php"
 
+# --- SSRF 攻击 ---
+- id: WEB-007
+  name: "Web Attack - Server-Side Request Forgery (SSRF)"
+  category: web_attack
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)(url|uri|path|dest|redirect|proxy)=http://(localhost|127\\.0\\.0\\.1|10\\.[0-9.]+|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)"
+    - "(?i)(url|uri|path|dest|redirect|proxy)=http://169\\.254\\."
+    - "(?i)(url|uri|path|dest|redirect|proxy)=http://0\\.0\\.0\\.0"
+    - "(?i)(url|uri|path|dest|redirect|proxy)=file://"
+    - "(?i)(url|uri|path|dest|redirect|proxy)=gopher://"
+    - "(?i)(url|uri|path|dest|redirect|proxy)=dict://"
+
+# --- XXE 攻击 ---
+- id: WEB-008
+  name: "Web Attack - XML External Entity (XXE) Injection"
+  category: web_attack
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)<!ENTITY\\s+\\w+\\s+SYSTEM\\s+['\"]file://"
+    - "(?i)<!ENTITY\\s+\\w+\\s+SYSTEM\\s+['\"]http://"
+    - "(?i)<!ENTITY\\s+\\w+\\s+SYSTEM\\s+['\"]php://"
+    - "(?i)<!ENTITY\\s+\\w+\\s+SYSTEM\\s+['\"]expect://"
+    - "(?i)<!DOCTYPE.*\\[.*<!ENTITY"
+
+# --- SSTI 模板注入 ---
+- id: WEB-009
+  name: "Web Attack - Server-Side Template Injection (SSTI)"
+  category: web_attack
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)\\{\\{.*\\}\\}"
+    - "(?i)\\{%\\s*(if|for|block|extends|include|import|set)\\s+"
+    - "(?i)\\$\\{.*\\}"
+    - "(?i)\\{\\{.*\\.__class__"
+    - "(?i)\\{\\{.*\\.__mro__"
+    - "(?i)\\{\\{.*\\.__subclasses__"
+    - "(?i)\\{\\{.*\\.__globals__"
+    - "(?i)\\{\\{.*\\.__init__"
+
+# --- 反序列化攻击 ---
+- id: WEB-010
+  name: "Web Attack - Deserialization Attack Pattern"
+  category: web_attack
+  severity: critical
+  protocols: [HTTP]
+  ports: [80, 443, 8080, 8443]
+  patterns:
+    - "(?i)O:\\d+:['\"]\\w+['\"]"
+    - "(?i)a:\\d+:\\{"
+    - "(?i)s:\\d+:['\"]"
+    - "(?i)__wakeup|__destruct|__toString|__call|__get|__set"
+    - "(?i)java\\.lang\\.Runtime"
+    - "(?i)java\\.util\\.HashMap"
+
 # --- SSRF ---
 - id: WEB-007
   name: "Web Attack - SSRF (Server Side Request Forgery)"
