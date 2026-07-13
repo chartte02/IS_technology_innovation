@@ -15,7 +15,7 @@ import time
 import yaml
 import logging
 import argparse
-from typing import Optional
+from typing import Optional, Dict
 
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -129,6 +129,27 @@ class IDSEngine:
             timeout=capture_cfg.get('timeout', 1000),
         )
 
+        # 8. TLS 加密流量检测器（成员B）
+        from core.tls_detector import TLSDetector
+        self.tls_detector = TLSDetector()
+        logger.info("[✓] TLS 加密流量检测器 (JA3指纹+证书异常)")
+
+        # ─── 性能监控 ───
+        self._perf_stats = {
+            'parse':    {'total': 0.0, 'count': 0},
+            'misuse':   {'total': 0.0, 'count': 0},
+            'reassemble': {'total': 0.0, 'count': 0},
+            'anomaly':  {'total': 0.0, 'count': 0},
+            'tls':      {'total': 0.0, 'count': 0},
+        }
+
+        # ─── 速率限制 (token bucket per IP) ───
+        rate_cfg = self.config.get('rate_limit', {})
+        self._rate_max_pps = rate_cfg.get('max_pps', 20000)
+        self._rate_burst = rate_cfg.get('burst', 1000)
+        self._rate_tokens: Dict[str, float] = {}
+        self._rate_dropped = 0
+
         # 注册回调解耦模块
         self.capture.add_callback(self._on_packet)
         logger.info("[✓] 数据包捕获器")
@@ -141,31 +162,57 @@ class IDSEngine:
 
     def _on_packet(self, packet):
         """
-        数据包处理回调 — 整个检测流水线
-        每个捕获到的包都会经过此函数处理
-
-        流程图:
-          packet → ProtocolParser.parse()
-                 → TCPReassembler.feed()      (流重组)
-                      → MisuseDetector        (流级别检测)
-                 → AnomalyDetector.update()   (统计更新)
-                      → AnomalyDetector.check()(异常检测)
-                 → AlertManager.submit()      (统一告警)
+        数据包处理回调 — 全链路流水线:
+          parse → rate_limit → misuse → tls → reassemble → anomaly → alert
         """
+        t_start = time.perf_counter()
+
         # Step 1: 协议解析
         parsed = self.parser.parse(packet)
+        self._perf_stats['parse']['total'] += time.perf_counter() - t_start
+        self._perf_stats['parse']['count'] += 1
         if parsed is None:
             return
 
-        # Step 2: 误用检测 — 单包匹配
-        misuse_alerts = self.misuse_detector.match_packet(parsed)
+        # 速率限制: token bucket per source IP
+        src_ip = parsed.get('src_ip', '')
+        if src_ip and self._rate_max_pps > 0:
+            now_ts = time.time()
+            tokens = self._rate_tokens.get(src_ip, self._rate_burst)
+            last_ts = self._rate_tokens.get(f'_ts_{src_ip}', now_ts)
+            tokens += (now_ts - last_ts) * self._rate_max_pps
+            tokens = min(tokens, self._rate_burst)
+            self._rate_tokens[f'_ts_{src_ip}'] = now_ts
+            if tokens < 1.0:
+                self._rate_dropped += 1
+                return
+            tokens -= 1.0
+            self._rate_tokens[src_ip] = tokens
 
-        # Step 3: TCP 流重组 → 流级别匹配（抗逃避）
+        # Step 2: 误用检测
+        t0 = time.perf_counter()
+        misuse_alerts = self.misuse_detector.match_packet(parsed)
+        self._perf_stats['misuse']['total'] += time.perf_counter() - t0
+        self._perf_stats['misuse']['count'] += 1
+
+        # Step 3: TLS 加密流量检测 (JA3指纹 + 证书异常)
+        t0 = time.perf_counter()
+        app_proto = parsed.get('app_protocol')
+        if app_proto and hasattr(app_proto, 'value') and app_proto.value in ('HTTPS', 'TLS'):
+            try:
+                tls_alerts = self.tls_detector.analyze(packet, parsed)
+                if tls_alerts:
+                    self.alert_mgr.submit_batch(tls_alerts, source='tls')
+            except Exception:
+                pass  # TLS 解析失败不影响主流程
+        self._perf_stats['tls']['total'] += time.perf_counter() - t0
+        self._perf_stats['tls']['count'] += 1
+
+        # Step 4: TCP 流重组
+        t0 = time.perf_counter()
         if self.config.get('tcp_reassembly', {}).get('enabled', True):
             stream_data = self.reassembler.feed(parsed)
             if stream_data:
-                flow_key = (parsed['src_ip'], parsed['dst_ip'],
-                           parsed['src_port'], parsed['dst_port'])
                 flow_info = {
                     'src_ip': parsed['src_ip'],
                     'dst_ip': parsed['dst_ip'],
@@ -175,19 +222,21 @@ class IDSEngine:
                 stream_alerts = self.misuse_detector.match_stream(
                     stream_data, flow_info)
                 misuse_alerts.extend(stream_alerts)
+        self._perf_stats['reassemble']['total'] += time.perf_counter() - t0
+        self._perf_stats['reassemble']['count'] += 1
 
-        # Step 4: 异常检测更新
+        # Step 5: 异常检测
         self.anomaly_detector.update(parsed)
 
-        # Step 5: 基线学习更新
+        # Step 6: 基线学习
         if self.baseline_learner.is_learning():
             self.baseline_learner.feed(parsed)
 
-        # Step 6: 提交误用检测告警
+        # Step 7: 提交误用检测告警
         if misuse_alerts:
             self.alert_mgr.submit_batch(misuse_alerts, source='misuse')
 
-        # Step 7: 定期检查异常（每 5 秒检查一次，避免每个包都检查）
+        # Step 8: 定期检查异常（每 5 秒）
         now = time.time()
         if not hasattr(self, '_last_anomaly_check'):
             self._last_anomaly_check = 0.0
@@ -218,12 +267,23 @@ class IDSEngine:
         return self.capture.replay_pcap(pcap_path)
 
     def get_status(self) -> dict:
-        """获取引擎整体状态"""
+        """获取引擎整体状态（含性能监控）"""
         capture_status = self.capture.get_status()
         alert_stats = self.alert_mgr.get_realtime_stats()
+        perf = {}
+        for stage, data in self._perf_stats.items():
+            if data['count'] > 0:
+                perf[stage] = {
+                    'avg_us': round(data['total'] / data['count'] * 1e6, 1),
+                    'total_ms': round(data['total'] * 1e3, 1),
+                    'count': data['count'],
+                }
+
         return {
             **capture_status,
             'alerts_last_60s': alert_stats,
+            'pipeline_perf_us': perf,
+            'rate_limit_dropped': self._rate_dropped,
         }
 
     def reload_signatures(self) -> int:

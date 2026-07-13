@@ -83,6 +83,11 @@ gui:
   max_display_alerts: 500          # 界面最大显示告警数
   chart_points: 60                 # 实时图表数据点数
 
+# --- 速率限制 ---
+rate_limit:
+  max_pps: 20000                # 单IP最大包速率, 0=关闭
+  burst: 1000                   # 突发容忍量
+
 # --- 威胁情报集成（扩展功能）---
 threat_intel:
   enabled: false                   # 是否启用
