@@ -9,6 +9,7 @@ import os
 import time
 import yaml
 import logging
+from collections import defaultdict
 from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -21,18 +22,25 @@ class Signature:
 
     __slots__ = ('sig_id', 'name', 'category', 'severity',
                  'patterns', 'threshold', 'protocols', 'ports',
-                 'enabled')
+                 'flowbits', 'enabled')
 
     def __init__(self, raw: Dict[str, Any]):
         self.sig_id = raw.get('id', 'UNKNOWN')
         self.name = raw.get('name', 'Unknown Signature')
         self.category = raw.get('category', 'unknown')
-        self.severity = raw.get('severity', 'medium')  # critical/high/medium/low
+        self.severity = raw.get('severity', 'medium')
         self.patterns = raw.get('patterns', [])
         self.threshold = raw.get('threshold', None)
-        self.protocols = raw.get('protocols', None)  # 限定的协议列表
-        self.ports = raw.get('ports', None)           # 限定的端口列表
+        self.protocols = raw.get('protocols', None)
+        self.ports = raw.get('ports', None)
         self.enabled = raw.get('enabled', True)
+        # Flowbits: 跨规则状态传递 (Suricata 兼容)
+        fb = raw.get('flowbits', {}) or {}
+        self.flowbits = {
+            'set':     fb.get('set', []),       # 命中后设置的 flag
+            'require': fb.get('require', []),   # 需要前置规则已设置这些 flag
+            'track':   fb.get('track', 'by_src'),  # 追踪粒度: by_src/by_dst/both
+        }
 
     def to_dict(self) -> Dict:
         return {
@@ -79,6 +87,24 @@ class SignatureMatcher:
 
         # 阈值型规则的状态追踪: sig_id → {key: [timestamps]}
         self._threshold_states: Dict[str, Dict[str, List[float]]] = {}
+
+        # Flowbits 状态: flow_key → set(flag_names)  (跨规则状态传递)
+        self._flowbits_state: Dict[str, set] = defaultdict(set)
+
+        # 白名单 IP（来自这些 IP 的告警直接忽略）
+        self._whitelist_ips: set = set()
+
+        # 内网 IP 前缀（来自内网的告警可能升级严重度）
+        self._internal_prefixes: List[str] = []
+
+    def set_whitelist(self, ips: List[str]) -> None:
+        """设置白名单 IP 列表（如已知扫描器、安全设备等）"""
+        self._whitelist_ips = set(ips)
+        logger.info(f"白名单已更新: {len(self._whitelist_ips)} 个 IP")
+
+    def set_internal_ranges(self, prefixes: List[str]) -> None:
+        """设置内网 IP 前缀列表（如 ['192.168.', '10.'] ）"""
+        self._internal_prefixes = prefixes
 
     # ─── 特征库加载 ───
 
@@ -264,16 +290,19 @@ class SignatureMatcher:
             parsed, payload_str, payload_lower)
 
         # Stage 1: AC 自动机匹配（字符串特征）— 全文匹配
+        web_categories = {'sql_injection', 'xss', 'web_attack', 'webshell'}
         ac_alerts = self._match_ac(payload_lower, parsed)
+        # AC 自动机告警也需要上下文过滤
+        ac_alerts = self._filter_web_false_positives(
+            ac_alerts, parsed, web_categories)
         alerts.extend(ac_alerts)
 
         # Stage 2: 正则表达式匹配
         # Web 类攻击仅检测查询参数（降低误报），非 Web 类检测全文
-        web_categories = {'sql_injection', 'xss', 'web_attack', 'webshell'}
         regex_candidates = self._get_regex_candidates(dst_port, proto_str)
         regex_alerts = self._match_regex(payload_str, payload_lower,
                                           regex_candidates, parsed)
-        # 对 Web 类告警做上下文二次确认：若仅在路径中匹配则过滤
+        # 对 Web 类告警做上下文二次确认
         regex_alerts = self._filter_web_false_positives(
             regex_alerts, parsed, web_categories)
         alerts.extend(regex_alerts)
@@ -281,6 +310,9 @@ class SignatureMatcher:
         # Stage 3: 阈值型规则检查
         threshold_alerts = self._check_threshold_rules(parsed)
         alerts.extend(threshold_alerts)
+
+        # Stage 4: Flowbits 跨规则状态传递 (Suricata 兼容)
+        alerts = self._apply_flowbits(alerts, parsed)
 
         # 去重（同一条规则在一个包中只保留一条告警）
         alerts = self._deduplicate_alerts(alerts)
@@ -336,41 +368,124 @@ class SignatureMatcher:
                                      parsed: Dict,
                                      web_categories: set) -> List[Dict]:
         """
-        对 Web 类告警做二次确认：如果匹配仅在 URL 路径部分而不在查询参数中，
-        则降级告警严重度（可能是误报）。
+        对 Web 类告警做上下文感知二次确认。
 
-        策略: 提取查询参数部分 → 若告警的匹配文本不在查询参数中，降为 low
+        过滤策略（多层降噪）:
+        1. 白名单 IP: 来自白名单 IP 的告警直接忽略
+        2. URL 路径匹配: 仅在路径不在查询参数中 → 降为 low
+        3. Referer 匹配: 仅在 Referer 头中 → 降为 low（可能是外部诱饵链接）
+        4. Cookie 匹配: 仅在 Cookie 中 → 降为 low（可能是正常 token）
+
+        Returns:
+            过滤后的告警列表
         """
         if not alerts:
             return alerts
 
-        http_uri = parsed.get('http_uri', '')
-        if not http_uri or '?' not in http_uri:
-            # 没有查询参数，无法区分，保持原样
-            return alerts
+        src_ip = parsed.get('src_ip', '')
 
-        query_part = http_uri.split('?', 1)[1].lower()
-        path_part = http_uri.split('?', 1)[0].lower()
+        # 提取 HTTP 头信息
+        headers = self._extract_http_headers(parsed)
+        referer = headers.get('referer', '').lower()
+        cookie = headers.get('cookie', '').lower()
+
+        http_uri = parsed.get('http_uri', '')
+        query_part = ''
+        path_part = http_uri.lower()
+        has_query = '?' in http_uri
+        if has_query:
+            query_part = http_uri.split('?', 1)[1].lower()
+            path_part = http_uri.split('?', 1)[0].lower()
 
         filtered = []
         for alert in alerts:
             cat = alert.get('category', '')
+
+            # 非 Web 类告警不参与上下文过滤
             if cat not in web_categories:
                 filtered.append(alert)
                 continue
 
+            # ── 1. 白名单 IP 直接跳过 ──
+            if src_ip in self._whitelist_ips:
+                logger.debug(
+                    f"白名单 IP {src_ip} 的告警已忽略: "
+                    f"{alert.get('signature_id', '?')}"
+                )
+                continue
+
+            alert = dict(alert)
             matched = alert.get('matched_text', '').lower()
-            if matched and matched not in query_part and matched in path_part:
-                # 匹配仅在路径中 → 可能是误报，降级
-                alert = dict(alert)
+            downgraded = False
+
+            # ── 2. 仅 URL 路径匹配 → 降级 ──
+            if (matched and has_query
+                    and matched not in query_part
+                    and matched in path_part):
                 alert['severity'] = 'low'
                 alert['description'] = (
-                    f"[低可信度-可能误报] {alert.get('description', '')} "
-                    f"(匹配位于URL路径而非查询参数)"
+                    f"[低可信度] {alert.get('description', '')} "
+                    f"(匹配位于URL路径: {path_part[:50]})"
                 )
+                downgraded = True
+
+            # ── 3. 仅 Referer 头匹配 → 降级 ──
+            if (matched and referer and matched in referer
+                    and not (query_part and matched in query_part)):
+                alert['severity'] = 'low'
+                alert['description'] = (
+                    f"[低可信度-Referer] {alert.get('description', '')} "
+                    f"(匹配位于Referer头而非请求参数)"
+                )
+                downgraded = True
+
+            # ── 4. 仅 Cookie 匹配 → 降级 ──
+            if (matched and cookie and matched in cookie
+                    and not (query_part and matched in query_part)
+                    and not (referer and matched in referer)):
+                alert['severity'] = 'low'
+                alert['description'] = (
+                    f"[低可信度-Cookie] {alert.get('description', '')} "
+                    f"(匹配位于Cookie而非请求参数)"
+                )
+                downgraded = True
+
             filtered.append(alert)
 
         return filtered
+
+    @staticmethod
+    def _extract_http_headers(parsed: Dict) -> Dict[str, str]:
+        """
+        从 HTTP 载荷中提取关键头部字段。
+
+        Returns:
+            dict with keys: 'referer', 'cookie', 'user_agent'
+        """
+        headers = {}
+        payload = parsed.get('payload', b'')
+        if not payload:
+            return headers
+
+        try:
+            text = payload.decode('utf-8', errors='ignore')
+            # 提取 HTTP 头部区域（\r\n\r\n 之前）
+            header_end = text.find('\r\n\r\n')
+            if header_end < 0:
+                header_end = text.find('\n\n')
+            header_section = text[:header_end] if header_end > 0 else text
+
+            for line in header_section.split('\r\n'):
+                if ':' not in line:
+                    continue
+                key, _, value = line.partition(':')
+                key_lower = key.strip().lower()
+                if key_lower in ('referer', 'cookie', 'user-agent'):
+                    headers[key_lower.replace('-', '_')] = value.strip()
+        except Exception:
+            pass
+
+        return headers
 
     def _match_ac(self, payload_lower: str, parsed: Dict) -> List[Dict]:
         """AC 自动机匹配"""
@@ -423,20 +538,16 @@ class SignatureMatcher:
         return alerts
 
     def _get_regex_candidates(self, port: int, proto: str) -> List[Tuple]:
-        """获取候选正则匹配器（按端口和协议筛选）"""
-        candidates = []
+        """获取候选正则匹配器（按端口和协议筛选 + 无限制规则全量）"""
+        candidates = list(self._regex_matchers)  # 包含所有无端口/协议限制的规则
 
-        # 端口匹配
+        # 端口匹配 — 额外加入端口专属规则
         if port in self._port_index:
             candidates.extend(self._port_index[port])
 
         # 协议匹配
         if proto in self._proto_index:
             candidates.extend(self._proto_index[proto])
-
-        # 如果没有索引命中，使用所有正则
-        if not candidates:
-            candidates = self._regex_matchers
 
         return candidates
 
@@ -512,16 +623,89 @@ class SignatureMatcher:
         except Exception:
             return False
 
+    # ─── Flowbits 跨规则状态传递 (Suricata 兼容) ───
+
+    def _apply_flowbits(self, alerts: List[Dict], parsed: Dict) -> List[Dict]:
+        """
+        Stage 4: 跨规则状态传递。
+
+        流程:
+        1. 检查告警规则的 flowbits.require → 不满足则丢弃
+        2. 保留的告警，设置其 flowbits.set 标记
+
+        flow key 由 track 策略决定:
+          by_src → "{src_ip}"
+          by_dst → "{dst_ip}"
+          both   → "{src_ip}→{dst_ip}"
+        """
+        src_ip = parsed.get('src_ip', '')
+        dst_ip = parsed.get('dst_ip', '')
+        filtered = []
+        flags_to_set = []
+
+        for alert in alerts:
+            sig_id = alert.get('signature_id', '')
+            sig = self.get_signature_by_id(sig_id)
+            if sig is None:
+                filtered.append(alert)
+                continue
+
+            fb = sig.flowbits
+            require = fb.get('require', [])
+            set_flags = fb.get('set', [])
+            track = fb.get('track', 'by_src')
+            flow_key = self._get_flowbit_key(src_ip, dst_ip, track)
+
+            # 检查前置条件
+            active = self._flowbits_state.get(flow_key, set())
+            missing = [f for f in require if f not in active]
+            if missing:
+                logger.debug(f"Flowbits: {sig_id} 跳过, 缺少 {missing}")
+                continue
+
+            filtered.append(alert)
+            if set_flags:
+                flags_to_set.append((flow_key, set_flags))
+
+        # 统一设置 flags
+        for flow_key, flags in flags_to_set:
+            if flow_key not in self._flowbits_state:
+                self._flowbits_state[flow_key] = set()
+            self._flowbits_state[flow_key].update(flags)
+
+        return filtered
+
+    @staticmethod
+    def _get_flowbit_key(src_ip: str, dst_ip: str, track: str) -> str:
+        if track == 'by_dst':
+            return dst_ip
+        elif track == 'both':
+            return f"{src_ip}->{dst_ip}"
+        return src_ip  # by_src
+
     # ─── 告警构造 ───
+
+    # MITRE ATT&CK 映射: category → (tactic_id, tactic_name, technique_id, technique_name)
+    MITRE_ATTACK_MAP = {
+        'sql_injection':  ('TA0001', 'Initial Access', 'T1190', 'Exploit Public-Facing Application'),
+        'xss':            ('TA0001', 'Initial Access', 'T1189', 'Drive-by Compromise'),
+        'web_attack':     ('TA0001', 'Initial Access', 'T1190', 'Exploit Public-Facing Application'),
+        'webshell':       ('TA0003', 'Persistence',     'T1505', 'Server Software Component'),
+        'brute_force':    ('TA0006', 'Credential Access','T1110', 'Brute Force'),
+        'backdoor':       ('TA0011', 'Command & Control','T1071', 'Application Layer Protocol'),
+        'dos':            ('TA0040', 'Impact',           'T1498', 'Network Denial of Service'),
+        'scan':           ('TA0043', 'Reconnaissance',   'T1046', 'Network Service Discovery'),
+    }
 
     def _build_alert(self, sig: Signature, pattern: str,
                      matched_text: str, parsed: Dict) -> Dict:
-        """构造告警字典，对齐接口约定 (CLAUDE.md §5.2)"""
+        """构造告警字典，对齐接口约定 (CLAUDE.md §5.2)，含 MITRE ATT&CK 映射"""
+        mitre = self.MITRE_ATTACK_MAP.get(sig.category, ('', '', '', ''))
         return {
             'signature_id': sig.sig_id,
             'signature_name': sig.name,
-            'type': sig.category,                     # 具体类型
-            'category': sig.category,                 # 大类
+            'type': sig.category,
+            'category': sig.category,
             'severity': sig.severity,
             'description': (
                 f"检测到 {sig.name}，"
@@ -529,12 +713,15 @@ class SignatureMatcher:
                 f"来源: {parsed.get('src_ip', '?')}:{parsed.get('src_port', '?')}"
             ),
             'matched_pattern': pattern,
-            'matched_text': matched_text[:100],       # 截断显示
+            'matched_text': matched_text[:100],
             'src_ip': parsed.get('src_ip', ''),
             'dst_ip': parsed.get('dst_ip', ''),
             'src_port': parsed.get('src_port', 0),
             'dst_port': parsed.get('dst_port', 0),
             'timestamp': parsed.get('timestamp', time.time()),
+            # MITRE ATT&CK 扩展字段
+            'mitre_tactic':       f"{mitre[0]} - {mitre[1]}",
+            'mitre_technique':    f"{mitre[2]} - {mitre[3]}",
         }
 
     @staticmethod

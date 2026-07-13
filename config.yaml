@@ -29,6 +29,13 @@ signatures:
   enable_regex: true           # 启用正则表达式匹配
   enable_aho_corasick: true    # 启用 AC 自动机加速
   case_sensitive: false        # 是否区分大小写（默认不区分）
+  # 白名单与上下文过滤（PDF扩展：误报自动降噪）
+  whitelist_ips: []            # 白名单IP，来自这些IP的告警直接忽略
+  # 示例: ["192.168.1.1", "10.0.0.254"]  (安全扫描器IP)
+  internal_prefixes:           # 内网IP前缀，内网攻击可升级严重度
+    - "192.168."
+    - "10."
+    - "172.16."
 
 # --- 异常检测配置 ---
 anomaly:
