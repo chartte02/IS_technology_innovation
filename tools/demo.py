@@ -79,9 +79,10 @@ def print_summary(results: list):
         print(f"  {label:<20} {pkt_count:>6} {alerts:>6} {'OK':>6}")
 
     print(f"\n  总告警数: {total_alerts}")
-    print(f"  检测类别: 9 大类 (SQLi/XSS/Web攻击/WebShell/暴力破解/后门/DoS/扫描/Suricata导入)")
-    print(f"  特征库:   91 条规则, 301 个匹配模式")
+    print(f"  检测类别: 9 大类 (SQLi/XSS/Web攻击/WebShell/暴力破解/后门/DoS/扫描)")
+    print(f"  特征库:   93 条规则, 301 个匹配模式")
     print(f"  性能:     < 1ms/包, 吞吐 > 9000 pps")
+    print(f"  系统:     TLS检测 | Flowbits攻击链 | Pipeline监控 | 速率限制")
     print(f"\n{'='*60}")
     print(f"  演示完成!")
     print(f"{'='*60}")
