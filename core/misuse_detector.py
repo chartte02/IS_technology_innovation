@@ -93,6 +93,11 @@ class SignatureMatcher:
         # Flowbits 状态: flow_key → set(flag_names)  (跨规则状态传递)
         self._flowbits_state: Dict[str, set] = defaultdict(set)
 
+        # FlowStats 连接级统计: flow_key → {packets, bytes, start, last}
+        self._flow_stats: Dict[str, Dict] = defaultdict(lambda: {
+            'packets': 0, 'bytes': 0, 'start': 0.0, 'last': 0.0
+        })
+
         # 白名单 IP（来自这些 IP 的告警直接忽略）
         self._whitelist_ips: set = set()
 
@@ -276,6 +281,9 @@ class SignatureMatcher:
         payload = parsed.get('payload', b'')
         if not payload:
             return []
+
+        # 连接级统计 (Zeek风格)
+        self._update_flow_stats(parsed)
 
         alerts = []
         dst_port = parsed.get('dst_port', 0)
@@ -595,16 +603,28 @@ class SignatureMatcher:
             # 检查是否超过阈值
             threshold_count = sig.threshold.get('count', 5)
             if len(state[flow_key]) >= threshold_count:
+                # 判定最终严重度：检查 escalate 升级条件
+                final_severity = sig.severity
+                escalate = sig.threshold.get('escalate', None)
+                if escalate:
+                    esc_window = escalate.get('window', 300)
+                    esc_count = escalate.get('count', 15)
+                    # 用更长窗口检查累计次数
+                    esc_state = [t for t in state[flow_key] if now - t < esc_window]
+                    if len(esc_state) >= esc_count:
+                        final_severity = escalate.get('severity', 'critical')
+
                 alerts.append({
                     'signature_id': sig.sig_id,
                     'signature_name': sig.name,
                     'type': sig.category,
                     'category': sig.category,
-                    'severity': sig.severity,
+                    'severity': final_severity,
                     'description': (
                         f"检测到 {sig.name}，"
                         f"在 {window}s 内触发 {len(state[flow_key])}/{threshold_count} 次，"
                         f"来源: {src_ip} → {dst_ip}:{port}"
+                        + (f" [已升级: {esc_window}s内累计{len(esc_state)}次]" if escalate and final_severity != sig.severity else "")
                     ),
                     'matched_pattern': (
                         f"threshold: {len(state[flow_key])}/{threshold_count}"
@@ -841,6 +861,39 @@ class SignatureMatcher:
             'ac_patterns': len(self._ac_sig_map),
             'regex_patterns': len(self._regex_matchers),
         }
+
+    # ─── FlowStats 连接级统计 (Zeek 风格) ───
+
+    def _update_flow_stats(self, parsed: Dict) -> None:
+        """更新连接级统计指标"""
+        src = parsed.get('src_ip', '')
+        dst = parsed.get('dst_ip', '')
+        port = parsed.get('dst_port', 0)
+        plen = parsed.get('payload_len', 0)
+        ts = parsed.get('timestamp', time.time())
+        key = f"{src}->{dst}:{port}"
+        stats = self._flow_stats[key]
+        stats['packets'] += 1
+        stats['bytes'] += plen
+        if stats['start'] == 0:
+            stats['start'] = ts
+        stats['last'] = ts
+
+    def get_flow_stats(self, top_n: int = 20) -> List[Dict]:
+        """获取 TOP N 连接的统计指标"""
+        flows = []
+        for key, stats in self._flow_stats.items():
+            duration = max(stats['last'] - stats['start'], 0.001)
+            flows.append({
+                'flow': key,
+                'packets': stats['packets'],
+                'bytes': stats['bytes'],
+                'duration': round(duration, 1),
+                'pps': round(stats['packets'] / duration, 1),
+                'bps': round(stats['bytes'] * 8 / duration, 0),
+            })
+        flows.sort(key=lambda x: -x['packets'])
+        return flows[:top_n]
 
 
 # ─── 简单模式匹配器（pyahocorasick 不可用时的 fallback） ───

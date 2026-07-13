@@ -66,6 +66,10 @@
     count: 10
     window: 60
     track: by_src
+    escalate:                    # 升级机制: 5分钟内30次 → critical
+      window: 300
+      count: 30
+      severity: critical
   patterns:
     - "401 Unauthorized"
     - "403 Forbidden"
