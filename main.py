@@ -238,6 +238,49 @@ class IDSEngine:
         logger.info(f"特征库热更新完成: {count} 条规则")
         return count
 
+    def enable_auto_reload(self, interval: float = 3.0) -> None:
+        """
+        启用文件监听自动热加载 — 监控 signatures/ 目录，
+        YAML 文件改动后自动调用 reload_signatures()。
+
+        Args:
+            interval: 检查间隔（秒）
+        """
+        import threading
+
+        sig_dir = os.path.abspath(
+            self.config.get('signatures', {}).get('directory', './signatures')
+        )
+        self._auto_reload_enabled = True
+
+        def watcher():
+            last_mtimes = {}
+            logger.info(f"文件监听已启动: {sig_dir} (间隔 {interval}s)")
+            while getattr(self, '_auto_reload_enabled', False):
+                try:
+                    current = {}
+                    for f in os.listdir(sig_dir):
+                        if f.endswith('.yaml'):
+                            fp = os.path.join(sig_dir, f)
+                            current[f] = os.path.getmtime(fp)
+
+                    if last_mtimes and current != last_mtimes:
+                        changed = [f for f in current
+                                   if current[f] != last_mtimes.get(f, 0)]
+                        logger.info(
+                            f"检测到特征库变更: {changed}, 自动热更新..."
+                        )
+                        self.reload_signatures()
+
+                    last_mtimes = current
+                except Exception as e:
+                    logger.error(f"文件监听异常: {e}")
+
+                time.sleep(interval)
+
+        t = threading.Thread(target=watcher, daemon=True)
+        t.start()
+
     def start_gui(self):
         """启动 GUI 界面"""
         try:
