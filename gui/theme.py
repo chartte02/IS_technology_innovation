@@ -76,293 +76,300 @@ DARK_THEME: dict = {
 
 
 # ═══════════════════════════════════════════════════════════════
+# 字号常量 (改一处, 全局生效)
+# ═══════════════════════════════════════════════════════════════
+
+FONT_BASE      = '20px'   # 全局默认
+FONT_SIDEBAR   = '20px'   # 侧边栏
+FONT_CARD_VAL  = '44px'   # 卡片数值
+FONT_CARD_TTL  = '16px'   # 卡片标题
+FONT_SECTION   = '20px'   # 内容区标题
+FONT_BTN       = '18px'   # 按钮
+FONT_TBL_HEAD  = '15px'   # 表头
+FONT_STATUSBAR = '17px'   # 状态栏
+FONT_GROUP_TTL = '15px'   # 分组框标题
+
+
+# ═══════════════════════════════════════════════════════════════
 # QSS 样式表生成
 # ═══════════════════════════════════════════════════════════════
 
 def build_stylesheet(c: dict) -> str:
-    """根据配色字典生成 Apple 风格全局 QSS 样式表。
-
-    Args:
-        c: 配色字典 (LIGHT_THEME 或 DARK_THEME)
-
-    Returns:
-        str: 完整的 QSS 样式表字符串 (~7400 字符)
-
-    调试提示:
-        >>> from gui.theme import LIGHT_THEME, build_stylesheet
-        >>> qss = build_stylesheet(LIGHT_THEME)
-        >>> print(qss[:200])   # 预览前 200 字符
-        >>> # 修改配色后只需重新调用 build_stylesheet() 然后 setStyleSheet()
-    """
-    return """
+    """根据配色字典生成 Apple 风格全局 QSS 样式表。"""
+    return f"""
     /* ===== 全局 ===== */
     QMainWindow {{
-        background-color: {window};
+        background-color: {c['window']};
     }}
     QWidget {{
         font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-        font-size: 15px;
-        color: {text};
+        font-size: {FONT_BASE};
+        color: {c['text']};
     }}
 
     /* ===== 顶部控制栏分隔线 ===== */
     QFrame#toolbarSeparator {{
-        color: {sidebarBorder};
+        color: {c['sidebarBorder']};
         max-height: 1px;
     }}
 
     /* ===== 侧边栏 ===== */
     QListWidget#sidebar {{
-        background-color: {sidebar};
+        background-color: {c['sidebar']};
         border: none;
-        border-right: 1px solid {sidebarBorder};
+        border-right: 1px solid {c['sidebarBorder']};
         outline: none;
-        font-size: 15px;
+        font-size: {FONT_SIDEBAR};
         padding: 8px 0;
     }}
     QListWidget#sidebar::item {{
         border-radius: 8px;
         margin: 1px 10px;
-        padding: 10px 14px;
-        color: {text};
+        padding: 12px 16px;
+        color: {c['text']};
     }}
     QListWidget#sidebar::item:selected {{
-        background-color: {highlight};
+        background-color: {c['highlight']};
         color: #FFFFFF;
         font-weight: 600;
     }}
     QListWidget#sidebar::item:hover:!selected {{
-        background-color: {sidebarHover};
+        background-color: {c['sidebarHover']};
     }}
 
     /* ===== 内容区 ===== */
     QStackedWidget#contentStack {{
-        background-color: {window};
+        background-color: {c['window']};
     }}
 
     /* ===== 统计卡片 ===== */
     QFrame#statCard {{
-        background-color: {card};
+        background-color: {c['card']};
         border-radius: 10px;
-        border: 1px solid {cardBorder};
-        padding: 14px 10px;
+        border: 1px solid {c['cardBorder']};
+        padding: 16px 12px;
     }}
     QLabel#cardValue {{
-        font-size: 32px;
+        font-size: {FONT_CARD_VAL};
         font-weight: 700;
     }}
     QLabel#cardTitle {{
-        font-size: 13px;
+        font-size: {FONT_CARD_TTL};
         font-weight: 600;
-        color: {grayText};
+        color: {c['grayText']};
         text-transform: uppercase;
         letter-spacing: 0.5px;
+        margin-top: 2px;
     }}
 
     /* ===== 内容卡片 ===== */
     QFrame#contentCard {{
-        background-color: {card};
+        background-color: {c['card']};
         border-radius: 10px;
-        border: 1px solid {cardBorder};
+        border: 1px solid {c['cardBorder']};
         padding: 16px;
     }}
     QLabel#sectionTitle {{
-        font-size: 16px;
+        font-size: {FONT_SECTION};
         font-weight: 700;
-        color: {text};
+        color: {c['text']};
         padding-bottom: 8px;
     }}
 
     /* ===== 按钮 ===== */
     QPushButton {{
-        background-color: {button};
-        color: {buttonText};
-        border: 1px solid {cardBorder};
-        border-radius: 6px;
-        padding: 6px 16px;
-        font-size: 15px;
+        background-color: {c['button']};
+        color: {c['buttonText']};
+        border: 1px solid {c['cardBorder']};
+        border-radius: 8px;
+        padding: 8px 20px;
+        font-size: {FONT_BTN};
     }}
     QPushButton:hover {{
-        background-color: {alternateBase};
-        border-color: {grayText2};
+        background-color: {c['alternateBase']};
+        border-color: {c['grayText2']};
     }}
     QPushButton:pressed {{
-        background-color: {highlight};
+        background-color: {c['highlight']};
         color: white;
-        border-color: {highlight};
+        border-color: {c['highlight']};
     }}
 
     /* 主操作按钮 — 启动/停止 */
     QPushButton#btnStart {{
         border: none;
         font-weight: 700;
-        font-size: 15px;
-        padding: 8px 20px;
+        font-size: {FONT_BTN};
+        padding: 10px 24px;
         border-radius: 8px;
     }}
     QPushButton#btnStart[state="stopped"] {{
-        background-color: {green};
+        background-color: {c['green']};
         color: white;
     }}
     QPushButton#btnStart[state="stopped"]:hover {{
-        background-color: {green};
+        background-color: {c['green']};
         opacity: 0.85;
     }}
     QPushButton#btnStart[state="running"] {{
-        background-color: {red};
+        background-color: {c['red']};
         color: white;
     }}
     QPushButton#btnStart[state="running"]:hover {{
-        background-color: {red};
+        background-color: {c['red']};
         opacity: 0.85;
     }}
 
     /* 控制栏次要按钮 */
     QPushButton#ctrlBtn {{
         background-color: transparent;
-        border: 1px solid {cardBorder};
-        border-radius: 6px;
-        padding: 6px 14px;
+        border: 1px solid {c['cardBorder']};
+        border-radius: 8px;
+        padding: 8px 16px;
+        font-size: {FONT_BTN};
     }}
     QPushButton#ctrlBtn:hover {{
-        background-color: {alternateBase};
+        background-color: {c['alternateBase']};
     }}
 
     /* ===== 表格 ===== */
     QTableWidget {{
-        background-color: {card};
-        alternate-background-color: {alternateBase};
-        border: 1px solid {cardBorder};
+        background-color: {c['card']};
+        alternate-background-color: {c['alternateBase']};
+        border: 1px solid {c['cardBorder']};
         border-radius: 8px;
-        gridline-color: {separator};
-        selection-background-color: {highlight};
+        gridline-color: {c['separator']};
+        selection-background-color: {c['highlight']};
         selection-color: white;
     }}
     QTableWidget::item {{
-        padding: 5px 10px;
+        padding: 6px 12px;
     }}
     QHeaderView::section {{
-        background-color: {sidebar};
-        color: {text};
+        background-color: {c['sidebar']};
+        color: {c['text']};
         border: none;
-        border-bottom: 1px solid {separator};
-        padding: 8px 10px;
+        border-bottom: 1px solid {c['separator']};
+        padding: 10px 12px;
         font-weight: 700;
-        font-size: 13px;
+        font-size: {FONT_TBL_HEAD};
         text-transform: uppercase;
     }}
 
     /* ===== 下拉框 ===== */
     QComboBox {{
-        background-color: {card};
-        border: 1px solid {cardBorder};
+        background-color: {c['card']};
+        border: 1px solid {c['cardBorder']};
         border-radius: 6px;
-        padding: 5px 10px;
-        color: {text};
+        padding: 6px 12px;
+        color: {c['text']};
+        font-size: {FONT_BTN};
     }}
     QComboBox:hover {{
-        border-color: {highlight};
+        border-color: {c['highlight']};
     }}
     QComboBox::drop-down {{
         border: none;
-        width: 24px;
+        width: 28px;
     }}
     QComboBox QAbstractItemView {{
-        background-color: {card};
-        border: 1px solid {cardBorder};
+        background-color: {c['card']};
+        border: 1px solid {c['cardBorder']};
         border-radius: 6px;
-        selection-background-color: {highlight};
+        selection-background-color: {c['highlight']};
         selection-color: white;
+        font-size: {FONT_BTN};
     }}
 
     /* ===== 文本输入 ===== */
     QLineEdit {{
-        background-color: {card};
-        border: 1px solid {cardBorder};
+        background-color: {c['card']};
+        border: 1px solid {c['cardBorder']};
         border-radius: 6px;
-        padding: 6px 10px;
-        color: {text};
+        padding: 8px 12px;
+        color: {c['text']};
+        font-size: {FONT_BTN};
     }}
     QLineEdit:focus {{
-        border-color: {highlight};
+        border-color: {c['highlight']};
     }}
 
     /* ===== 文本区域 ===== */
     QTextEdit {{
-        background-color: {card};
-        border: 1px solid {cardBorder};
+        background-color: {c['card']};
+        border: 1px solid {c['cardBorder']};
         border-radius: 8px;
-        color: {text};
-        padding: 8px;
+        color: {c['text']};
+        padding: 10px;
     }}
 
     /* ===== 分割器 ===== */
     QSplitter::handle {{
-        background-color: {separator};
+        background-color: {c['separator']};
         width: 1px;
     }}
 
     /* ===== 状态栏 ===== */
     QStatusBar#appStatusBar {{
-        background-color: {sidebar};
-        border-top: 1px solid {sidebarBorder};
-        color: {grayText};
-        font-size: 14px;
-        padding: 3px 12px;
+        background-color: {c['sidebar']};
+        border-top: 1px solid {c['sidebarBorder']};
+        color: {c['grayText']};
+        font-size: {FONT_STATUSBAR};
+        padding: 4px 14px;
     }}
     QLabel#statusLabel {{
-        color: {grayText};
-        font-size: 14px;
+        color: {c['grayText']};
+        font-size: {FONT_STATUSBAR};
     }}
 
     /* ===== 滚动条 ===== */
     QScrollBar:vertical {{
         background: transparent;
-        width: 8px;
+        width: 10px;
         margin: 0;
     }}
     QScrollBar::handle:vertical {{
-        background: {cardBorder};
-        border-radius: 4px;
-        min-height: 30px;
+        background: {c['cardBorder']};
+        border-radius: 5px;
+        min-height: 36px;
     }}
     QScrollBar::handle:vertical:hover {{
-        background: {grayText2};
+        background: {c['grayText2']};
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;
     }}
     QScrollBar:horizontal {{
         background: transparent;
-        height: 8px;
+        height: 10px;
     }}
     QScrollBar::handle:horizontal {{
-        background: {cardBorder};
-        border-radius: 4px;
-        min-width: 30px;
+        background: {c['cardBorder']};
+        border-radius: 5px;
+        min-width: 36px;
     }}
     QScrollBar::handle:horizontal:hover {{
-        background: {grayText2};
+        background: {c['grayText2']};
     }}
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
         width: 0;
     }}
 
-    /* ===== 分组框 (保留用于兼容, 但新设计用 contentCard) ===== */
+    /* ===== 分组框 (保留用于兼容) ===== */
     QGroupBox {{
         font-weight: 700;
-        border: 1px solid {cardBorder};
+        border: 1px solid {c['cardBorder']};
         border-radius: 8px;
         margin-top: 8px;
-        padding-top: 16px;
-        color: {text};
+        padding-top: 18px;
+        color: {c['text']};
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
         left: 12px;
         padding: 0 6px;
-        color: {grayText};
-        font-size: 13px;
+        color: {c['grayText']};
+        font-size: {FONT_GROUP_TTL};
         text-transform: uppercase;
     }}
-    """.format(**c)
+    """
