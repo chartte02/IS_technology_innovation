@@ -69,8 +69,8 @@ class AlertManager:
                  max_alerts: int = 10000,           # 最大告警数
                  enable_console: bool = True,
                  enable_json_export: bool = True,
-                 json_file: str = './alerts.json',
-                 log_file: str = './alerts.log'):
+                 json_file: str = './output/alerts.json',
+                 log_file: str = './output/alerts.log'):
         """
         Args:
             dedup_window: 同类告警去重窗口（秒）

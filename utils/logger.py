@@ -10,7 +10,7 @@ from pathlib import Path
 
 def setup_logger(name: str = 'NADS',
                  level: str = 'INFO',
-                 log_dir: str = './logs',
+                 log_dir: str = './output/logs',
                  log_file: str = 'ids.log') -> logging.Logger:
     """配置并返回日志器"""
     logger = logging.getLogger(name)

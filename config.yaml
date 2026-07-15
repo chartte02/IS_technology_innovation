@@ -8,8 +8,8 @@ system:
   name: "Network Attack Detection System (NADS)"
   version: "1.0.0"
   log_level: "INFO"           # DEBUG | INFO | WARNING | ERROR
-  log_dir: "./logs"
-  log_file: "ids.log"
+  log_dir: "./output/logs"
+  log_file: "ids.log"   # -> output/logs/ids.log
 
 # --- 网络抓包配置 ---
 capture:
@@ -63,9 +63,10 @@ anomaly:
 # --- 告警配置 ---
 alert:
   enable_console_output: true      # 控制台实时输出
-  enable_file_log: true            # 文件日志
-  enable_json_export: true         # JSON 导出
-  json_export_file: "./alerts.json"
+  enable_file_log: true            # 文件日志 -> output/alerts.log
+  enable_json_export: true         # JSON 导出 -> output/alerts.json
+  json_export_file: "./output/alerts.json"
+  log_file: "./output/alerts.log"
   dedup_window: 10                 # 告警去重窗口（秒）
   max_alerts_in_memory: 10000      # 内存中最大告警数
 
@@ -93,4 +94,4 @@ threat_intel:
   enabled: false                   # 是否启用
   abuseipdb_api_key: ""            # AbuseIPDB API Key
   alienvault_otx_api_key: ""       # AlienVault OTX API Key
-  local_blacklist: "./blacklist.txt"
+  local_blacklist: "./output/blacklist.txt"
