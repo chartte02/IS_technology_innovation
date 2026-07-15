@@ -65,13 +65,13 @@ python test_signature_match.py
 | XSS | Script 标签, 事件处理器, 编码绕过, SVG/IFrame, CSS表达式 | 10 |
 | Web 攻击 | 目录遍历, 命令注入, 文件包含, SSRF, XXE, SSTI, PHP代码执行 | 24 |
 | WebShell | 蚁剑, 冰蝎, 哥斯拉, 中国菜刀, JSP/ASPX Webshell | 7 |
-| 暴力破解 | SSH, FTP, HTTP, RDP, Telnet | 8 |
-| 后门/木马 | C2 通信, CobaltStrike, Meterpreter, 挖矿木马, DNS 隧道 | 9 |
+| 暴力破解 | SSH, FTP, HTTP, RDP, Telnet | 9 |
+| 后门/木马 | C2 通信, CobaltStrike, Meterpreter, 挖矿木马, DNS 隧道 | 10 |
 | DoS/DDoS | SYN Flood, Slowloris, HTTP Flood, DNS 放大 | 7 |
 | 扫描探测 | Nmap, Nikto, Nessus, Burp, SQLMap 等扫描器指纹 | 9 |
 | 异常行为 | 端口扫描, 横向扩散, 高频流量, 基线偏离 | — |
 
-> **合计**: 91 条规则, 301 个匹配模式, 9 大类别, 支持 Suricata 规则导入
+> **合计**: 93 条规则, 301 个匹配模式, 9 大类别, 支持 Suricata 规则导入
 
 ## 团队分工
 
