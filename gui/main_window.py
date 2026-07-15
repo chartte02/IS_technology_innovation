@@ -81,7 +81,7 @@ class IDSMainWindow(QMainWindow):
     def _init_ui(self):
         """初始化界面布局 — Apple 风格: 侧边栏 + 堆叠内容页"""
         self.setWindowTitle("NADS — 常见网络攻击检测系统")
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(1400, 900)
 
         # 中央 Widget
         central = QWidget()
@@ -150,7 +150,7 @@ class IDSMainWindow(QMainWindow):
         """创建 Apple 风格侧边栏导航"""
         sidebar = QListWidget()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(220)
+        sidebar.setFixedWidth(260)
         sidebar.setSpacing(0)
 
         # 导航项目: (显示文本, 页索引)
@@ -163,19 +163,19 @@ class IDSMainWindow(QMainWindow):
         ]
         for label, idx in items:
             item = QListWidgetItem(label)
-            item.setSizeHint(QSize(200, 42))
+            item.setSizeHint(QSize(240, 50))
             item.setData(Qt.UserRole, idx)
             sidebar.addItem(item)
 
         # 分隔符
         sep_item = QListWidgetItem("")
-        sep_item.setSizeHint(QSize(200, 1))
+        sep_item.setSizeHint(QSize(240, 1))
         sep_item.setFlags(Qt.NoItemFlags)
         sidebar.addItem(sep_item)
 
         # 主题切换
         theme_item = QListWidgetItem("  ☀  Toggle Theme")   # ☀
-        theme_item.setSizeHint(QSize(200, 40))
+        theme_item.setSizeHint(QSize(240, 50))
         theme_item.setData(Qt.UserRole, 99)
         sidebar.addItem(theme_item)
 
@@ -305,7 +305,7 @@ class IDSMainWindow(QMainWindow):
         # 标题
         title = QLabel("Dashboard")
         title.setObjectName("sectionTitle")
-        title.setStyleSheet("font-size: 28px; font-weight: 700; padding-bottom: 4px;")
+        title.setStyleSheet("font-size: 36px; font-weight: 700; padding-bottom: 4px;")
         layout.addWidget(title)
 
         # ─── 统计卡片行 (6 张卡片) ───
@@ -410,7 +410,7 @@ class IDSMainWindow(QMainWindow):
         self.lbl_streams = QLabel("TCP: 0")
         for lbl in [self.lbl_pps, self.lbl_bps, self.lbl_conn,
                      self.lbl_hosts, self.lbl_streams]:
-            lbl.setStyleSheet("font-size: 13px; padding: 4px 10px; "
+            lbl.setStyleSheet("font-size: 15px; padding: 4px 10px; "
                             "background-color: " +
                             (LIGHT_THEME['alternateBase'] if self._current_theme == 'light'
                              else DARK_THEME['alternateBase']) +
@@ -441,7 +441,7 @@ class IDSMainWindow(QMainWindow):
         layout.setSpacing(16)
 
         title = QLabel("Alerts")
-        title.setStyleSheet("font-size: 28px; font-weight: 700; padding-bottom: 4px;")
+        title.setStyleSheet("font-size: 36px; font-weight: 700; padding-bottom: 4px;")
         layout.addWidget(title)
 
         card = QFrame()
@@ -496,7 +496,7 @@ class IDSMainWindow(QMainWindow):
         layout.setSpacing(16)
 
         title = QLabel("Statistics")
-        title.setStyleSheet("font-size: 28px; font-weight: 700; padding-bottom: 4px;")
+        title.setStyleSheet("font-size: 36px; font-weight: 700; padding-bottom: 4px;")
         layout.addWidget(title)
 
         # 图表行: 饼图 + 柱状图
@@ -591,7 +591,7 @@ class IDSMainWindow(QMainWindow):
         layout.setSpacing(16)
 
         title = QLabel("Signature Library")
-        title.setStyleSheet("font-size: 28px; font-weight: 700; padding-bottom: 4px;")
+        title.setStyleSheet("font-size: 36px; font-weight: 700; padding-bottom: 4px;")
         layout.addWidget(title)
 
         card = QFrame()
@@ -618,7 +618,7 @@ class IDSMainWindow(QMainWindow):
 
         self.text_sig = QTextEdit()
         self.text_sig.setReadOnly(True)
-        self.text_sig.setFont(QFont("Consolas", 12))
+        self.text_sig.setFont(QFont("Consolas", 14))
         card_layout.addWidget(self.text_sig)
 
         layout.addWidget(card)
@@ -634,7 +634,7 @@ class IDSMainWindow(QMainWindow):
         layout.setSpacing(16)
 
         title = QLabel("System Log")
-        title.setStyleSheet("font-size: 28px; font-weight: 700; padding-bottom: 4px;")
+        title.setStyleSheet("font-size: 36px; font-weight: 700; padding-bottom: 4px;")
         layout.addWidget(title)
 
         card = QFrame()
@@ -643,7 +643,7 @@ class IDSMainWindow(QMainWindow):
 
         self.text_log = QTextEdit()
         self.text_log.setReadOnly(True)
-        self.text_log.setFont(QFont("Consolas", 11))
+        self.text_log.setFont(QFont("Consolas", 13))
         card_layout.addWidget(self.text_log)
 
         layout.addWidget(card)
@@ -656,7 +656,7 @@ class IDSMainWindow(QMainWindow):
         """创建 Apple 风格统计卡片 (圆角白底 + 左侧色条)"""
         card = QFrame()
         card.setObjectName("statCard")
-        card.setMinimumHeight(90)
+        card.setMinimumHeight(110)
 
         inner = QVBoxLayout(card)
         inner.setContentsMargins(16, 10, 12, 10)
@@ -666,7 +666,7 @@ class IDSMainWindow(QMainWindow):
         lbl_value = QLabel(value)
         lbl_value.setObjectName("cardValue")
         lbl_value.setStyleSheet(
-            "font-size: 34px; font-weight: 700; color: {0};".format(accent))
+            "font-size: 48px; font-weight: 700; color: {0};".format(accent))
         lbl_value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         inner.addWidget(lbl_value)
 
