@@ -1,0 +1,605 @@
+# ==============================================
+# Suricata 规则导入 — 自动生成
+# 导入规则数: 43
+# ==============================================
+
+- id: SUR-1000101
+  name: 'Suricata: SQLi - Error Based extractvalue'
+  category: web_attack
+  severity: high
+  patterns:
+  - extractvalue
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000102
+  name: 'Suricata: SQLi - Error Based updatexml'
+  category: web_attack
+  severity: high
+  patterns:
+  - updatexml
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000103
+  name: 'Suricata: SQLi - Benchmark'
+  category: web_attack
+  severity: high
+  patterns:
+  - benchmark
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000104
+  name: 'Suricata: SQLi - Order By Probe'
+  category: web_attack
+  severity: high
+  patterns:
+  - order by
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000105
+  name: 'Suricata: SQLi - Having Clause'
+  category: web_attack
+  severity: high
+  patterns:
+  - having
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000106
+  name: 'Suricata: SQLi - Group By'
+  category: web_attack
+  severity: high
+  patterns:
+  - group by
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000201
+  name: 'Suricata: XSS - Body Onerror'
+  category: web_attack
+  severity: high
+  patterns:
+  - onerror
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000202
+  name: 'Suricata: XSS - SVG Onload'
+  category: web_attack
+  severity: high
+  patterns:
+  - onload
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000203
+  name: 'Suricata: XSS - Document Cookie'
+  category: web_attack
+  severity: high
+  patterns:
+  - document.cookie
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000204
+  name: 'Suricata: XSS - Eval Function'
+  category: web_attack
+  severity: high
+  patterns:
+  - eval
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000301
+  name: 'Suricata: RCE - Netcat'
+  category: web_attack
+  severity: high
+  patterns:
+  - nc
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000302
+  name: 'Suricata: RCE - Curl'
+  category: web_attack
+  severity: high
+  patterns:
+  - curl
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000303
+  name: 'Suricata: RCE - Wget'
+  category: web_attack
+  severity: high
+  patterns:
+  - wget
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000304
+  name: 'Suricata: RCE - Powershell'
+  category: web_attack
+  severity: high
+  patterns:
+  - powershell
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000305
+  name: 'Suricata: RCE - Cmd'
+  category: web_attack
+  severity: high
+  patterns:
+  - cmd.exe
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000306
+  name: 'Suricata: RCE - Python'
+  category: web_attack
+  severity: high
+  patterns:
+  - python -c
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000307
+  name: 'Suricata: RCE - Perl'
+  category: web_attack
+  severity: high
+  patterns:
+  - perl -e
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000401
+  name: 'Suricata: LFI - Proc Self'
+  category: web_attack
+  severity: high
+  patterns:
+  - /proc/self
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000402
+  name: 'Suricata: LFI - System32'
+  category: web_attack
+  severity: high
+  patterns:
+  - system32
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000403
+  name: 'Suricata: LFI - PHP Wrapper'
+  category: web_attack
+  severity: high
+  patterns:
+  - php://
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000404
+  name: 'Suricata: RFI - HTTP'
+  category: web_attack
+  severity: high
+  patterns:
+  - http://
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000405
+  name: 'Suricata: RFI - FTP'
+  category: web_attack
+  severity: high
+  patterns:
+  - ftp://
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000501
+  name: 'Suricata: Scan - DirBuster'
+  category: scan
+  severity: medium
+  patterns:
+  - dirbuster
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000502
+  name: 'Suricata: Scan - Gobuster'
+  category: scan
+  severity: medium
+  patterns:
+  - gobuster
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000503
+  name: 'Suricata: Scan - Wfuzz'
+  category: scan
+  severity: medium
+  patterns:
+  - wfuzz
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000504
+  name: 'Suricata: Scan - Hydra'
+  category: scan
+  severity: medium
+  patterns:
+  - hydra
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000505
+  name: 'Suricata: Scan - Medusa'
+  category: scan
+  severity: medium
+  patterns:
+  - medusa
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000601
+  name: 'Suricata: C2 - Empire Agent'
+  category: backdoor
+  severity: critical
+  patterns:
+  - empire
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000602
+  name: 'Suricata: C2 - CobaltStrike'
+  category: backdoor
+  severity: critical
+  patterns:
+  - cobaltstrike
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000603
+  name: 'Suricata: C2 - DNS Tunnel'
+  category: backdoor
+  severity: critical
+  patterns:
+  - AAAA
+  enabled: true
+  protocols:
+  - DNS
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000703
+  name: 'Suricata: HTTP - WP Login'
+  category: brute_force
+  severity: high
+  patterns:
+  - wp-login
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000801
+  name: 'Suricata: DoS - Slowloris'
+  category: dos
+  severity: high
+  patterns:
+  - 'X-a: b'
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000802
+  name: 'Suricata: DoS - Range Attack'
+  category: dos
+  severity: high
+  patterns:
+  - 'Range: bytes'
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000803
+  name: 'Suricata: DoS - SYN Flood'
+  category: dos
+  severity: high
+  patterns:
+  - SYN
+  enabled: true
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000901
+  name: 'Suricata: WebShell - File Manager'
+  category: web_attack
+  severity: high
+  patterns:
+  - filemanager
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000902
+  name: 'Suricata: WebShell - Backdoor'
+  category: web_attack
+  severity: high
+  patterns:
+  - backdoor
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000903
+  name: 'Suricata: WebShell - Config'
+  category: web_attack
+  severity: high
+  patterns:
+  - config.php
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1000904
+  name: 'Suricata: WebShell - DB Dump'
+  category: web_attack
+  severity: high
+  patterns:
+  - mysqldump
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1001001
+  name: 'Suricata: InfoLeak - Git'
+  category: web_attack
+  severity: high
+  patterns:
+  - .git/config
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1001002
+  name: 'Suricata: InfoLeak - Env'
+  category: web_attack
+  severity: high
+  patterns:
+  - .env
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1001003
+  name: 'Suricata: InfoLeak - Swagger'
+  category: web_attack
+  severity: high
+  patterns:
+  - swagger
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1001004
+  name: 'Suricata: InfoLeak - PHPInfo'
+  category: web_attack
+  severity: high
+  patterns:
+  - phpinfo
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
+- id: SUR-1001005
+  name: 'Suricata: InfoLeak - Debug'
+  category: web_attack
+  severity: high
+  patterns:
+  - debug
+  enabled: true
+  protocols:
+  - HTTP
+  ports:
+  - 80
+  - 443
+  - 8080
+  - 8443
