@@ -111,7 +111,8 @@ class IDSEngine:
             max_alerts=alert_cfg.get('max_alerts_in_memory', 10000),
             enable_console=alert_cfg.get('enable_console_output', True),
             enable_json_export=alert_cfg.get('enable_json_export', True),
-            json_file=alert_cfg.get('json_export_file', './alerts.json'),
+            json_file=alert_cfg.get('json_export_file', './output/alerts.json'),
+            log_file=alert_cfg.get('log_file', './output/alerts.log'),
         )
         logger.info("[✓] 告警管理器")
 
@@ -129,10 +130,14 @@ class IDSEngine:
             timeout=capture_cfg.get('timeout', 1000),
         )
 
-        # 8. TLS 加密流量检测器（成员B）
-        from core.tls_detector import TLSDetector
-        self.tls_detector = TLSDetector()
-        logger.info("[✓] TLS 加密流量检测器 (JA3指纹+证书异常)")
+        # 8. TLS 加密流量检测器（成员B，cryptography 未安装时跳过）
+        try:
+            from core.tls_detector import TLSDetector
+            self.tls_detector = TLSDetector()
+            logger.info("[✓] TLS 加密流量检测器 (JA3指纹+证书异常)")
+        except ImportError:
+            self.tls_detector = None
+            logger.info("[✗] TLS 检测器跳过 (cryptography 未安装)")
 
         # ─── 性能监控 ───
         self._perf_stats = {
@@ -196,35 +201,36 @@ class IDSEngine:
         self._perf_stats['misuse']['count'] += 1
 
         # Step 3: TLS 加密流量检测 (JA3指纹 + 证书异常)
-        t0 = time.perf_counter()
-        app_proto = parsed.get('app_protocol')
-        if app_proto and hasattr(app_proto, 'value') and app_proto.value in ('HTTPS', 'TLS'):
-            try:
-                payload = parsed.get('payload', b'')
-                if payload:
-                    # 尝试 ClientHello 分析 (JA3 指纹)
-                    result = self.tls_detector.analyze_client_hello(payload)
-                    if result.get('is_anomalous'):
-                        for anom in result.get('anomalies', []):
-                            self.alert_mgr.submit({
-                                'signature_id': f"TLS-{anom.get('type','?')}",
-                                'signature_name': f"TLS Anomaly: {anom.get('desc','')}",
-                                'type': 'tls_anomaly',
-                                'category': 'backdoor',
-                                'severity': anom.get('severity', 'medium'),
-                                'description': anom.get('desc', ''),
-                                'src_ip': parsed.get('src_ip', ''),
-                                'dst_ip': parsed.get('dst_ip', ''),
-                                'src_port': parsed.get('src_port', 0),
-                                'dst_port': parsed.get('dst_port', 0),
-                                'timestamp': parsed.get('timestamp', time.time()),
-                                'detail': {'ja3': result.get('ja3', ''),
-                                           'sni': result.get('sni', '')},
-                            }, source='tls')
-            except Exception:
-                pass  # 非 ClientHello 消息则跳过
-        self._perf_stats['tls']['total'] += time.perf_counter() - t0
-        self._perf_stats['tls']['count'] += 1
+        if self.tls_detector is not None:
+            t0 = time.perf_counter()
+            app_proto = parsed.get('app_protocol')
+            if app_proto and hasattr(app_proto, 'value') and app_proto.value in ('HTTPS', 'TLS'):
+                try:
+                    payload = parsed.get('payload', b'')
+                    if payload:
+                        # 尝试 ClientHello 分析 (JA3 指纹)
+                        result = self.tls_detector.analyze_client_hello(payload)
+                        if result.get('is_anomalous'):
+                            for anom in result.get('anomalies', []):
+                                self.alert_mgr.submit({
+                                    'signature_id': f"TLS-{anom.get('type','?')}",
+                                    'signature_name': f"TLS Anomaly: {anom.get('desc','')}",
+                                    'type': 'tls_anomaly',
+                                    'category': 'backdoor',
+                                    'severity': anom.get('severity', 'medium'),
+                                    'description': anom.get('desc', ''),
+                                    'src_ip': parsed.get('src_ip', ''),
+                                    'dst_ip': parsed.get('dst_ip', ''),
+                                    'src_port': parsed.get('src_port', 0),
+                                    'dst_port': parsed.get('dst_port', 0),
+                                    'timestamp': parsed.get('timestamp', time.time()),
+                                    'detail': {'ja3': result.get('ja3', ''),
+                                               'sni': result.get('sni', '')},
+                                }, source='tls')
+                except Exception:
+                    pass  # 非 ClientHello 消息则跳过
+            self._perf_stats['tls']['total'] += time.perf_counter() - t0
+            self._perf_stats['tls']['count'] += 1
 
         # Step 4: TCP 流重组
         t0 = time.perf_counter()

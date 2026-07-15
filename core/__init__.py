@@ -4,7 +4,11 @@
 
 from core.packet_capture import PacketCapture
 from core.protocol_parser import ProtocolParser, AppProtocol
-from core.tls_detector import TLSDetector, TLSParseError
+try:
+    from core.tls_detector import TLSDetector, TLSParseError
+except ImportError:
+    TLSDetector = None   # type: ignore
+    TLSParseError = None # type: ignore
 from core.tcp_reassembler import TCPStreamReassembler, StreamBuffer
 from core.misuse_detector import SignatureMatcher, Signature
 from core.anomaly_detector import AnomalyDetector, HostStats, BaselineProfile
