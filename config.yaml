@@ -8,8 +8,8 @@ system:
   name: "Network Attack Detection System (NADS)"
   version: "1.0.0"
   log_level: "INFO"           # DEBUG | INFO | WARNING | ERROR
-  log_dir: "./output/logs"
-  log_file: "ids.log"   # -> output/logs/ids.log
+  log_dir: "./logs"
+  log_file: "ids.log"
 
 # --- 网络抓包配置 ---
 capture:
@@ -45,13 +45,13 @@ anomaly:
 
   # 端口扫描检测阈值
   port_scan:
-    unique_ports_threshold: 20      # 60秒内访问超过此端口数 → 端口扫描
+    unique_ports_threshold: 10      # 60秒内访问10+不同端口 → 端口扫描（调优后）
   horizontal_scan:
-    unique_ips_threshold: 50        # 60秒内访问超过此IP数 → 横向扫描
+    unique_ips_threshold: 20        # 60秒内访问20+不同IP → 横向扫描（调优后）
   brute_force:
-    login_fail_threshold: 5         # 60秒内登录失败次数 → 暴力破解
+    login_fail_threshold: 3         # 60秒内3次登录失败 → 暴力破解（调优后）
   syn_flood:
-    syn_threshold: 1000             # SYN包数阈值
+    syn_threshold: 500              # 500个SYN包（调优后，原1000偏松）
     syn_ratio: 0.8                  # SYN占比阈值（80%）
   ddos:
     pps_threshold: 10000            # 每秒包数阈值
@@ -63,10 +63,9 @@ anomaly:
 # --- 告警配置 ---
 alert:
   enable_console_output: true      # 控制台实时输出
-  enable_file_log: true            # 文件日志 -> output/alerts.log
-  enable_json_export: true         # JSON 导出 -> output/alerts.json
-  json_export_file: "./output/alerts.json"
-  log_file: "./output/alerts.log"
+  enable_file_log: true            # 文件日志
+  enable_json_export: true         # JSON 导出
+  json_export_file: "./alerts.json"
   dedup_window: 10                 # 告警去重窗口（秒）
   max_alerts_in_memory: 10000      # 内存中最大告警数
 
@@ -94,4 +93,4 @@ threat_intel:
   enabled: false                   # 是否启用
   abuseipdb_api_key: ""            # AbuseIPDB API Key
   alienvault_otx_api_key: ""       # AlienVault OTX API Key
-  local_blacklist: "./output/blacklist.txt"
+  local_blacklist: "./blacklist.txt"

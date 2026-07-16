@@ -333,8 +333,7 @@ class AnomalyDetector:
         deviations = []
 
         # 检查端口多样性偏离
-        port_ratio = stats.unique_dst_ports and \
-            len(stats.unique_dst_ports) / max(self.baseline.avg_unique_ports, 1)
+        port_ratio = len(stats.unique_dst_ports) / max(self.baseline.avg_unique_ports, 1)
         if port_ratio > 3.0:
             deviations.append(
                 f'端口数异常: {len(stats.unique_dst_ports)} '
@@ -456,7 +455,8 @@ class AnomalyDetector:
             # SSH
             if 'permission denied' in payload_str or \
                'authentication failed' in payload_str or \
-               'invalid user' in payload_str:
+               'invalid user' in payload_str or \
+               'failed password' in payload_str:
                 stats.login_attempts += 1
                 stats.login_failures += 1
             # FTP
