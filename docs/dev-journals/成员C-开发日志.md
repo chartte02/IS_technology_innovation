@@ -340,6 +340,66 @@
 
 ---
 
+## Day 6 — 2026-07-18（可视化图表 + 性能基准 + IF+RF两阶段 + 威胁情报）
+
+### 1. 今日进度
+
+- [x] **可视化基线对比** — `tools/viz_baseline.py`，生成 5 类答辩用图表
+- [x] **性能基准测试** — `tests/benchmark_anomaly.py`，4 项指标全部达标
+- [x] **IF+RF 两阶段降噪** — `core/ml_anomaly.py` 新增 `TwoStageDetector` 类（12 维特征 + LRU 缓存）
+- [x] **威胁情报集成** — `tools/threat_intel.py` 升级，支持 AbuseIPDB API + 缓存 + 告警 enrichment
+- [x] 全部 73 个测试通过（15 异常 + 31 两阶段 + 27 威胁情报）
+
+### 2. 遇到的问题与解决
+
+| 问题 | 现象 | 原因 | 解决方案 |
+|------|------|------|----------|
+| IF 训练后攻击主机被判正常 | TwoStageDetector 测试中 IF predict() 返回 1 | 训练集 30 正常+30 攻击各半，contamination=0.05 只标记 3 个异常 | IF 训练改 50 正常+3 攻击（≈5%），匹配 contamination |
+| 威胁情报 CLI 输出乱码 | Windows 终端 UnicodeEncodeError | emoji 字符无法被 gbk 编码 | 移除 emoji，改用纯 ASCII 文本 |
+
+### 3. Agent 协作记录
+
+| 任务 | 是否用 Agent | 效果评估 |
+|------|-------------|----------|
+| 设计 matplotlib 图表配色和布局 | ✅ 用了 | Agent 给出配色方案建议 (blue/orange/red 三色) |
+| 分析 IF 预测始终返回 normal 的根因 | ✅ 用了 | Agent 指出 contamination 和训练数据配比的匹配问题 |
+| 调试 benchmark 脚本编码错误 | ✅ 用了 | Agent 指出 print 语句中的 emoji 在 Windows 下的编码问题 |
+
+### 4. 技术决策
+
+| 决策 | 选项 A | 选项 B | 选择 | 理由 |
+|------|--------|--------|------|------|
+| 可视化工具位置 | `tools/` | 独立脚本 | `tools/viz_baseline.py` | 与已有工具集保持一致 |
+| IF+RF 实现位置 | 独立文件 | 追加到 `ml_anomaly.py` | 追加 | TwoStageDetector 复用 MLAnomalyDetector，同文件减少 import 依赖 |
+| 威胁情报缓存策略 | 无缓存 | LRU + TTL 3600s | LRU+TTL | 避免重复查询同一 IP，TTL 保证数据新鲜度 |
+| 性能测试组织 | 并入 test_anomaly_detection.py | 独立文件 | 独立文件 | benchmark 是性能测试不是功能测试 |
+
+### 5. 性能/测试数据
+
+| 测试项 | 结果 | 备注 |
+|--------|------|------|
+| 异常检测延迟 | **0.001 ms/包** (10000 包平均) | 目标 < 1ms ✅，快 1000x |
+| PCAP 回放吞吐量 | **28,517 pps** (20000 包) | 目标 > 5,000 ✅ |
+| 内存占用 (500 主机) | **253 MB** | 目标 < 500MB ✅ |
+| 自适应阈值降低率 | 端口扫描 40-68% / 暴力破解 40% / SYN Flood 55% / 高频流量 68% | 动态阈值显著降低 |
+| IF+RF 误报降低率 | 16.7% (IF 标记 12 个 → RF 排除 2 个) | 测试数据受限，理论可达 88.6% |
+| TwoStageDetector 测试 | **31/31 通过** | 9 个测试场景 |
+| ThreatIntel 测试 | **27/27 通过** | 9 个测试场景 |
+| **总测试数** | **73/73 通过 (100%)** | 无回归 |
+
+### 6. 参考项目借鉴
+
+| 参考项目 | 借鉴内容 | 落地情况 |
+|----------|----------|----------|
+| R6 IF+RF 两阶段方案 | IsolationForest 粗筛 → RandomForest 精判，理论误报降低 88.6% | `TwoStageDetector` 类，8 IF 特征 + 4 上下文特征 = 12 维 |
+| R5 Slips 威胁情报 | AbuseIPDB API 查询 IP 信誉 + 本地黑名单 | `ThreatIntel` 类，支持 API 调用 / LRU 缓存 / 告警 enrichment |
+
+### 7. 明日计划
+
+所有开发任务已完成，进入答辩准备阶段。
+
+---
+
 ## 答辩素材汇总（Day 7 填写）
 
 ### 我解决的 3 个最有价值的问题
