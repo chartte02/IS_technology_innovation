@@ -76,6 +76,18 @@ anomaly:
     min_samples: 10                    # 开始动态计算的最小样本数
     window_size: 200                   # 滑动窗口大小
 
+  # 两阶段异常检测（IF + RF，参考 R6 两阶段方案）
+  # Stage1: IsolationForest 无监督快速筛选
+  # Stage2: RandomForest 监督精判，降低误报
+  two_stage:
+    enabled: false                     # 是否启用（需安装 scikit-learn）
+    feeding: true                      # 是否自动喂养标签数据（从规则引擎结果提取）
+    min_feed: 50                       # RF 训练前最少喂养样本数
+    rf_n_estimators: 100               # RandomForest 树数
+    rf_max_depth: 10                   # 树的最大深度
+    rf_min_samples_split: 5            # 内部节点最小样本数
+    rf_random_state: 42
+
 # --- 告警配置 ---
 alert:
   enable_console_output: true      # 控制台实时输出
