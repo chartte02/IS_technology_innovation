@@ -269,8 +269,23 @@ class AnomalyDetector:
                 f"min_samples={self.adaptive.min_samples}")
 
         # ─── ML 异常检测 ───
+        two_stage_enabled = cfg.get('two_stage', {}).get('enabled', False)
         ml_enabled = cfg.get('ml_detection', {}).get('enabled', False)
-        if ml_enabled:
+        self.ml_detector = None
+        self.two_stage = None
+
+        if two_stage_enabled:
+            from core.ml_anomaly import TwoStageDetector
+            ts_cfg = cfg.get('two_stage', {})
+            self.two_stage = TwoStageDetector(ts_cfg)
+            logger.info("两阶段检测器已启用 (IF + RF)")
+
+            # 两阶段模式下，RF 需要喂养标签样本
+            self._two_stage_feeding = ts_cfg.get('feeding', True)
+            self._two_stage_pos_feeds = 0
+            self._two_stage_neg_feeds = 0
+            self._two_stage_min_feed = ts_cfg.get('min_feed', 50)
+        elif ml_enabled:
             from core.ml_anomaly import MLAnomalyDetector
             ml_cfg = cfg.get('ml_detection', {})
             self.ml_detector = MLAnomalyDetector(ml_cfg)
@@ -358,11 +373,65 @@ class AnomalyDetector:
                     if len(self._ml_collected) >= (getattr(self.ml_detector, 'min_samples', 20)):
                         self.ml_detector.train()
 
+            # 两阶段模式: 自动收集无监督特征
+            if self.two_stage and self.two_stage.if_detector.is_ready() is False:
+                if not hasattr(self, '_ts_collected'):
+                    self._ts_collected = set()
+                if src_ip not in self._ts_collected:
+                    self.two_stage.if_detector.collect_features(src_stats)
+                    self._ts_collected.add(src_ip)
+                    if len(self._ts_collected) >= (
+                            getattr(self.two_stage.if_detector, 'min_samples', 20)):
+                        self.two_stage.if_detector.train()
+
             # 更新目标 IP 统计（收包情况）
             dst_stats = self._get_or_create_host(dst_ip)
             dst_stats.packet_count += 1
             dst_stats.bytes_received += payload_len
             dst_stats.last_seen = timestamp
+
+    # ─── 两阶段模式 ───
+
+    def feed_two_stage(self, alert: Dict, host_stats=None):
+        """
+        向两阶段检测器喂标签数据。
+        规则引擎触发的告警 → 正样本；无告警 → 负样本。
+
+        应在 check_all() 后调用，传入规则引擎已确认的告警信息。
+        """
+        if self.two_stage is None:
+            return
+        if not self._two_stage_feeding:
+            return
+
+        src_ip = alert.get('src_ip', '')
+        if not src_ip or src_ip in self.whitelist_ips:
+            return
+
+        stats = host_stats or self._stats.get(src_ip)
+        if stats is None:
+            return
+
+        # 规则引擎触发的告警 = 正样本（真攻击）
+        source = alert.get('_source', '')
+        is_attack = source == 'misuse' or alert.get('severity') in ('critical', 'high')
+
+        self.two_stage.feed_labeled(stats, is_attack=True if is_attack else False)
+        if is_attack:
+            self._two_stage_pos_feeds += 1
+        else:
+            self._two_stage_neg_feeds += 1
+
+        # 当正负样本都充足时自动训练 RF
+        total = self._two_stage_pos_feeds + self._two_stage_neg_feeds
+        if (total >= self._two_stage_min_feed
+                and not self.two_stage._rf_trained
+                and self._two_stage_pos_feeds >= 10
+                and self._two_stage_neg_feeds >= 10):
+            logger.info(
+                f"两阶段喂养完成: 正={self._two_stage_pos_feeds}, "
+                f"负={self._two_stage_neg_feeds}, 开始 RF 训练...")
+            self.two_stage.train_rf()
 
     # ─── 异常检测 ───
 
@@ -419,7 +488,30 @@ class AnomalyDetector:
             if bd:
                 alerts.append(bd)
 
-        # 7. ML 异常检测（如果有模型）
+        # 7. 两阶段 ML 异常检测 (IF + RF)
+        if self.two_stage:
+            verdict, conf = self.two_stage.predict(stats)
+            if verdict in ('attack', 'unsure'):
+                severity = 'medium' if verdict == 'attack' else 'low'
+                alerts.append({
+                    'type': 'two_stage_anomaly',
+                    'category': 'anomaly',
+                    'severity': severity,
+                    'src_ip': ip,
+                    'description': (
+                        f'两阶段检测: {verdict} (置信度: {conf:.2f})'
+                        if verdict == 'attack' else
+                        f'IF 异常但 RF 未确认 (分数: {conf:.2f})'
+                    ),
+                    'detail': {
+                        'verdict': verdict,
+                        'confidence': round(conf, 4),
+                        'two_stage': True,
+                    },
+                    'timestamp': time.time(),
+                })
+
+        # 8. 单阶段 ML 异常检测（IF 模式）
         if self.ml_detector and self.ml_detector.is_ready():
             ml_pred = self.ml_detector.predict(host_stats=stats, ip=ip, use_cache=True)
             if ml_pred == -1:

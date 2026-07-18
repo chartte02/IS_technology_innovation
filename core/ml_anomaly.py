@@ -453,3 +453,368 @@ class MLAnomalyDetector:
         """获取特征向量的人类可读摘要"""
         vec = self.extract_features(host_stats)
         return {name: float(vec[i]) for i, name in enumerate(self.feature_names)}
+
+
+# ════════════════════════════════════════════════════════════
+#  TwoStageDetector — IF + RF 两阶段降噪
+#  参考: R6 sarthakghavghave/network-traffic-anomaly-analysis
+#  思想: IsolationForest 粗筛 → RandomForest 精判
+#  效果: 理论误报消减率 88.6%
+# ════════════════════════════════════════════════════════════
+
+try:
+    from sklearn.ensemble import RandomForestClassifier
+    HAS_RF = True
+except ImportError:
+    HAS_RF = False
+    logger.warning("scikit-learn 可用但 RF 未加载")
+
+if not HAS_SKLEARN:
+    HAS_RF = False
+
+
+class TwoStageDetector:
+    """
+    两阶段异常检测器: IsolationForest 粗筛 → RandomForest 精判
+
+    原理:
+      Stage 1 (IF):  对每台主机的 8 维特征做无监督异常检测，快速标记可疑主机
+      Stage 2 (RF):  对 IF 标记"异常"的主机，提取更多上下文特征，
+                     用监督学习判断是真攻击还是误报
+
+    训练数据来源:
+      - 正样本: 触发规则引擎告警的主机（confirmed attack）
+      - 负样本: 正常运行未触发告警的主机（normal）
+      - RF 的特征 = 8 维 IF 特征 + 4 维上下文特征 = 12 维
+
+    集成方式:
+      two_stage = TwoStageDetector()
+      two_stage.feed_labeled(host_stats, is_attack=True)  # 训练 RF
+      result = two_stage.predict(host_stats)
+      # result: ('normal', 1.0) | ('attack', score) | ('unsure', if_score)
+    """
+
+    # 上下文特征名称（追加在 IF 的 8 维之后）
+    CONTEXT_FEATURES = [
+        'bytes_per_conn',         # 平均每连接字节数
+        'syn_ratio',              # SYN / 总连接 比例
+        'port_entropy',           # 端口分布熵（扫描行为的度量）
+        'conn_per_second',        # 每秒连接数
+    ]
+
+    def __init__(self, config: Optional[Dict] = None):
+        cfg = config or {}
+
+        # Stage 1: IsolationForest（复用 MLAnomalyDetector）
+        self.if_detector = MLAnomalyDetector(cfg)
+
+        # Stage 2: RandomForest
+        self.rf_model: Optional[RandomForestClassifier] = None
+        self.rf_config = {
+            'n_estimators': cfg.get('rf_n_estimators', 100),
+            'max_depth': cfg.get('rf_max_depth', 10),
+            'min_samples_split': cfg.get('rf_min_samples_split', 5),
+            'random_state': cfg.get('rf_random_state', 42),
+            'class_weight': cfg.get('rf_class_weight', 'balanced'),
+        }
+
+        # 训练缓存
+        self._rf_features: List[np.ndarray] = []
+        self._rf_labels: List[int] = []
+        self._rf_trained = False
+
+        # 上下文特征列掩码
+        self._rf_valid_cols: Optional[np.ndarray] = None
+
+        # 统计
+        self.total_processed = 0
+        self.if_flagged = 0        # IF 标记为异常
+        self.rf_confirmed = 0      # RF 确认真攻击
+        self.rf_rejected = 0       # RF 判定为误报
+        self.confidence_scores = []
+
+        logger.info(
+            f"两阶段检测器已初始化: IF(IsolationForest) + "
+            f"RF(RandomForest, {self.rf_config['n_estimators']} trees)")
+
+    # ─── 特征提取（12 维） ───
+
+    def extract_combined_features(self, host_stats) -> np.ndarray:
+        """
+        提取 12 维组合特征向量。
+
+        [0..7]  IF 特征（同 MLAnomalyDetector）
+        [8..11] 上下文特征（专用于 RF 精判）
+        """
+        # 8 维 IF 特征
+        if_features = self.if_detector.extract_features(host_stats)
+
+        # 4 维上下文特征
+        duration = max(time.time() - getattr(host_stats, 'first_seen', time.time()), 1.0)
+        conn_count = float(getattr(host_stats, 'conn_count', 0))
+        syn_count = float(getattr(host_stats, 'syn_count', 0))
+
+        bytes_sent = float(getattr(host_stats, 'bytes_sent', 0))
+        bytes_recv = float(getattr(host_stats, 'bytes_received', 0))
+
+        n_ports = len(getattr(host_stats, 'unique_dst_ports', set()))
+        n_ips = len(getattr(host_stats, 'unique_dst_ips', set()))
+
+        # bytes_per_conn
+        bytes_per_conn = (bytes_sent + bytes_recv) / max(conn_count, 1)
+
+        # syn_ratio
+        syn_ratio = syn_count / max(conn_count, 1)
+
+        # port_entropy: 端口分布的均匀性（扫描行为往往均匀分布）
+        if n_ports <= 1:
+            port_entropy = 0.0
+        else:
+            # 简化熵: 用 端口数/IP数 比例近似
+            port_entropy = n_ports / max(n_ips + n_ports, 1)
+
+        # conn_per_second
+        conn_per_second = conn_count / max(duration, 1)
+
+        context = np.array([
+            bytes_per_conn,
+            syn_ratio,
+            port_entropy,
+            conn_per_second,
+        ], dtype=np.float64)
+
+        return np.concatenate([if_features, context])
+
+    def _filter_rf_features(self, vec: np.ndarray) -> np.ndarray:
+        """根据 RF 训练时保存的有效列掩码过滤"""
+        if self._rf_valid_cols is not None:
+            return vec[self._rf_valid_cols]
+        return vec
+
+    # ─── 训练 ───
+
+    def feed_labeled(self, host_stats, is_attack: bool):
+        """
+        提供一条有标签的训练数据。
+
+        Args:
+            host_stats: HostStats 实例
+            is_attack: True=攻击（正样本）, False=正常（负样本）
+        """
+        vec = self.extract_combined_features(host_stats)
+        self._rf_features.append(vec)
+        self._rf_labels.append(1 if is_attack else 0)
+
+    def train_rf(self) -> bool:
+        """训练 RandomForest 模型"""
+        if not HAS_RF:
+            logger.error("scikit-learn 未安装，无法训练 RF 模型")
+            return False
+        if len(self._rf_features) < 10:
+            logger.warning(f"RF 训练数据不足: {len(self._rf_features)} < 10")
+            return False
+
+        X = np.array(self._rf_features)
+        y = np.array(self._rf_labels)
+
+        # 检查类别平衡
+        n_pos = int(np.sum(y))
+        n_neg = len(y) - n_pos
+        logger.info(f"RF 训练: {len(y)} 样本 (正={n_pos}, 负={n_neg})")
+
+        # 方差过滤 + 抖动
+        stds = np.std(X, axis=0)
+        valid = stds > 1e-10
+        if not np.any(valid):
+            noise = np.random.RandomState(42).normal(0, 1e-6, X.shape)
+            X_f = X + noise
+            self._rf_valid_cols = None
+        else:
+            X_f = X[:, valid]
+            self._rf_valid_cols = valid
+
+        try:
+            self.rf_model = RandomForestClassifier(**self.rf_config)
+            self.rf_model.fit(X_f, y)
+            self._rf_trained = True
+            n_features = X_f.shape[1]
+            logger.info(
+                f"RF 模型训练完成: {len(y)} 样本, "
+                f"{n_features}/{len(self.CONTEXT_FEATURES) + 8} 特征")
+            return True
+        except Exception as e:
+            logger.error(f"RF 训练失败: {e}")
+            return False
+
+    # ─── 推理 ───
+
+    def predict(self, host_stats) -> Tuple[str, float]:
+        """
+        两阶段预测。
+
+        Returns:
+            ('normal', confidence)    — 两阶段一致判定正常
+            ('attack', confidence)     — 两阶段一致判定攻击
+            ('unsure', if_score)       — IF 标记但 RF 未就绪
+        """
+        self.total_processed += 1
+
+        # Stage 1: IF 快速筛选
+        if_pred = self.if_detector.predict(host_stats=host_stats)
+        if if_pred == 0:
+            return ('normal', 0.0)  # 模型未就绪
+
+        if if_pred == 1:
+            return ('normal', 0.0)  # IF 判定正常 → 直接放行
+
+        # IF 标记为异常 (-1)
+        self.if_flagged += 1
+
+        # Stage 2: RF 精判
+        if not self._rf_trained or self.rf_model is None:
+            return ('unsure', float(if_pred))
+
+        vec = self._filter_rf_features(self.extract_combined_features(host_stats))
+        try:
+            # RF 预测概率
+            probs = self.rf_model.predict_proba(vec.reshape(1, -1))
+            # 类别顺序: [0=正常, 1=攻击] 或 [0=攻击, 1=正常]
+            # 检查 classes_ 确定索引
+            attack_idx = 1 if self.rf_model.classes_[1] == 1 else 0
+            attack_prob = float(probs[0][attack_idx])
+
+            # 决策
+            if attack_prob >= 0.5:
+                self.rf_confirmed += 1
+                self.confidence_scores.append(attack_prob)
+                return ('attack', attack_prob)
+            else:
+                self.rf_rejected += 1
+                return ('normal', 1 - attack_prob)
+
+        except Exception as e:
+            logger.error(f"RF 预测失败: {e}")
+            return ('unsure', 0.0)
+
+    def predict_batch(self, all_host_stats: Dict) -> List[Dict]:
+        """
+        批量预测所有主机。
+
+        Returns:
+            [{'ip': ..., 'verdict': ..., 'confidence': ...}, ...]
+        """
+        results = []
+        for ip, stats in all_host_stats.items():
+            verdict, conf = self.predict(stats)
+            results.append({
+                'ip': ip,
+                'verdict': verdict,
+                'confidence': round(conf, 4),
+            })
+        return results
+
+    # ─── 模型持久化 ───
+
+    def save_model(self, filepath: str) -> bool:
+        """保存两阶段模型到文件"""
+        try:
+            import joblib
+            data = {
+                'if_model': self.if_detector.model,
+                'if_valid_cols': self.if_detector._valid_cols,
+                'if_trained': self.if_detector._trained,
+                'if_training_data': list(self.if_detector._training_data),
+                'rf_model': self.rf_model,
+                'rf_valid_cols': self._rf_valid_cols,
+                'rf_trained': self._rf_trained,
+                'feature_names': self.if_detector.feature_names,
+            }
+            joblib.dump(data, filepath)
+            logger.info(f"两阶段模型已保存: {filepath}")
+            return True
+        except ImportError:
+            import pickle
+            with open(filepath, 'wb') as f:
+                pickle.dump({
+                    'if_model': self.if_detector.model,
+                    'if_valid_cols': self.if_detector._valid_cols,
+                    'if_trained': self.if_detector._trained,
+                    'rf_model': self.rf_model,
+                    'rf_valid_cols': self._rf_valid_cols,
+                    'rf_trained': self._rf_trained,
+                }, f)
+            logger.info(f"两阶段模型已保存 (pickle): {filepath}")
+            return True
+        except Exception as e:
+            logger.error(f"保存两阶段模型失败: {e}")
+            return False
+
+    def load_model(self, filepath: str) -> bool:
+        """加载两阶段模型"""
+        try:
+            import joblib
+            data = joblib.load(filepath)
+        except ImportError:
+            import pickle
+            with open(filepath, 'rb') as f:
+                data = pickle.load(f)
+        except Exception as e:
+            logger.error(f"加载两阶段模型失败: {e}")
+            return False
+
+        # 恢复 IF
+        self.if_detector.model = data.get('if_model')
+        self.if_detector._valid_cols = data.get('if_valid_cols')
+        self.if_detector._trained = data.get('if_trained', False)
+
+        # 恢复 RF
+        self.rf_model = data.get('rf_model')
+        self._rf_valid_cols = data.get('rf_valid_cols')
+        self._rf_trained = data.get('rf_trained', False)
+
+        n = len(data.get('if_training_data', []))
+        logger.info(f"两阶段模型已加载: {filepath} (IF训练样本={n})")
+        return True
+
+    # ─── 统计 ───
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """获取两阶段检测统计"""
+        rf_feature_count = len(self.CONTEXT_FEATURES) + 8
+
+        return {
+            # Stage 1
+            'stage1_type': 'IsolationForest',
+            'stage1_ready': self.if_detector.is_ready(),
+            'stage1_training_samples': len(self.if_detector._training_data),
+            # Stage 2
+            'stage2_type': 'RandomForest',
+            'stage2_ready': self._rf_trained and self.rf_model is not None,
+            'stage2_training_samples': len(self._rf_features),
+            'stage2_total_features': rf_feature_count,
+            'stage2_rf_config': self.rf_config,
+            # 运行统计
+            'total_processed': self.total_processed,
+            'if_flagged': self.if_flagged,          # IF 标记异常
+            'rf_confirmed': self.rf_confirmed,       # RF 确认真攻击
+            'rf_rejected': self.rf_rejected,         # RF 判定为误报
+            'false_positive_reduction': (
+                f"{self.rf_rejected / max(self.if_flagged, 1) * 100:.1f}%"
+                if self.if_flagged > 0 else "0%"
+            ),
+        }
+
+    def reset(self):
+        """重置检测器"""
+        self.if_detector.reset()
+        self.rf_model = None
+        self._rf_features.clear()
+        self._rf_labels.clear()
+        self._rf_valid_cols = None
+        self._rf_trained = False
+        self.total_processed = 0
+        self.if_flagged = 0
+        self.rf_confirmed = 0
+        self.rf_rejected = 0
+        self.confidence_scores.clear()
+        logger.info("两阶段检测器已重置")
