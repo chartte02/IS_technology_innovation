@@ -1,0 +1,7 @@
+D-V5 JSON Export: 50 submitted=50, exported=50
+  -> PASS
+  All 50 alerts have required fields: YES
+  Alert[0] src_ip=10.0.0.0 -> PASS
+  Alert[49] src_ip=10.49.49.49 -> PASS
+
+D-V5: PASSED

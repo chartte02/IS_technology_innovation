@@ -1,0 +1,15 @@
+D-V4 Dedup: 100 submitted, 41 accepted (expected 41: 1+40) -> PASS
+  Batch1(30): 1st accepted, 29 deduped
+  Batch2(40): all 40 accepted (unique keys)
+  Batch3(30): all 30 deduped (same as batch1)
+  Stats.get_statistics().total = 41
+
+D-V5 JSON Export: 1 alerts exported -> FAIL
+  Required fields: ALL PRESENT
+
+D-V2 GUI Responsiveness:
+  500 alert submit (no console): 24321ms -> SLOW
+  _refresh_ui: 1ms -> PASS (<200ms)
+  populate 500 rows: 17ms -> PASS (<200ms)
+
+=== ALL VERIFICATION COMPLETE ===
