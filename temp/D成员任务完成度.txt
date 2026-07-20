@@ -1,0 +1,28 @@
+============================================================
+D 成员任务完成度对照 (docs/成员工作分工设计.md)
+============================================================
+
+[ OK ] D-V1: 告警全链路测试  -> PCAP回放已验证, 16包->21告警
+[TODO] D-V2: GUI响应性测试  -> TODO
+[TODO] D-V3: 内存稳定性测试  -> TODO
+[TODO] D-V4: 去重准确性验证  -> TODO
+[TODO] D-V5: JSON导出完整性  -> TODO
+[ OK ] D-1: PyQtChart 4种图表数据接入  -> 饼图/柱状图/PPS线图/TOP来源全部接入
+[ OK ] D-2: 演示环境搭建 >=5 PCAP  -> 已有3个, 需要>=2个补充
+[TODO] D-3: 告警详情弹窗  -> TODO - 双击表格行
+[TODO] D-4: PCAP回放进度条+倍速  -> TODO
+[TODO] D-5: 测试套件完善  -> TODO
+[TODO] D-S1: 攻击链可视化面板  -> TODO - 第6个Tab
+[ OK ] D-S2: 一键全自动演示模式  -> 已完成Demo按钮, 待增强
+[TODO] D-S3: 威胁情报GUI展示  -> TODO - 依赖C模块
+[ OK ] D-M1: 接口格式确认  -> 已验证parsed_packet和alert格式对齐
+[ OK ] D-M2: 联调调度  -> A+B+C+D全链路已验证
+[TODO] D-M3: 代码审查  -> TODO
+[ OK ] D-M4: Git管理  -> feat/d-gui-redesign分支已推送
+[TODO] D-M5: 答辩PPT制作  -> TODO
+[ OK ] D-M6: 开发日志检查  -> A完成Day1-7,B Day1-2,C Day1,D Day1-3
+[TODO] D-M7: 演示彩排  -> TODO
+
+已完成: 8/20
+待完成: 12/20
+待做: ['D-V2', 'D-V3', 'D-V4', 'D-V5', 'D-3', 'D-4', 'D-5', 'D-S1', 'D-S3', 'D-M3', 'D-M5', 'D-M7']

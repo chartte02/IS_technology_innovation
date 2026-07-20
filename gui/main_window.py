@@ -19,7 +19,7 @@ try:
     from PyQt5.QtWidgets import (
         QMainWindow, QApplication, QWidget, QVBoxLayout, QHBoxLayout,
         QTableWidget, QTableWidgetItem, QPushButton,
-        QLabel, QComboBox, QLineEdit, QTextEdit, QSplitter,
+        QLabel, QComboBox, QLineEdit, QTextEdit,
         QGroupBox, QGridLayout, QHeaderView, QStatusBar, QMessageBox,
         QMenuBar, QAction, QFileDialog, QProgressBar, QCheckBox,
         QSpinBox, QFormLayout, QStackedWidget, QListWidget,
@@ -28,7 +28,12 @@ try:
     from PyQt5.QtCore import (
         Qt, QTimer, pyqtSignal, QThread, QMargins, QSize,
     )
-    from PyQt5.QtGui import QFont, QColor, QIcon, QPalette, QPainter
+    from PyQt5.QtGui import QFont, QColor, QIcon, QPalette, QPainter, QBrush, QPen
+    from PyQt5.QtWidgets import (
+        QGraphicsScene, QGraphicsView, QGraphicsEllipseItem,
+        QGraphicsLineItem, QGraphicsTextItem, QGraphicsRectItem,
+    )
+    from PyQt5.QtCore import QPointF, QRectF, QLineF
     HAS_PYQT5 = True
 except ImportError:
     HAS_PYQT5 = False
@@ -47,6 +52,9 @@ except ImportError:
 # 主题系统 (独立模块, 可单独调试)
 from gui.theme import LIGHT_THEME, DARK_THEME, build_stylesheet
 
+# 流量生成器 (Demo 模式)
+from tools.traffic_generator import TrafficGenerator
+
 
 # ═══════════════════════════════════════════════════════════════
 # 主窗口
@@ -61,6 +69,7 @@ class IDSMainWindow(QMainWindow):
 
         super().__init__()
         self.engine = None
+        self.demo_generator = None  # Demo 模式流量生成器
         self._current_theme = 'light'
 
         # Chart data buffers (for real-time line chart)
@@ -119,7 +128,8 @@ class IDSMainWindow(QMainWindow):
         self.stack.addWidget(self._create_alert_tab())          # 1
         self.stack.addWidget(self._create_statistics_tab())     # 2
         self.stack.addWidget(self._create_signature_tab())      # 3
-        self.stack.addWidget(self._create_log_tab())            # 4
+        self.stack.addWidget(self._create_attack_chain_tab())   # 4
+        self.stack.addWidget(self._create_log_tab())            # 5
         body.addWidget(self.stack, 1)
 
         main_layout.addLayout(body, 1)
@@ -155,11 +165,12 @@ class IDSMainWindow(QMainWindow):
 
         # 导航项目: (显示文本, 页索引)
         items = [
-            ("  ◉  Dashboard",   0),   # ◉
-            ("  ⚠  Alerts",      1),   # ⚠
-            ("  ▶  Statistics",  2),   # ▶
-            ("  ☰  Signatures",  3),   # ☰
-            ("  ☷  Log",         4),   # ☷
+            ("  ◉  Dashboard",      0),   # ◉
+            ("  ⚠  Alerts",         1),   # ⚠
+            ("  ▶  Statistics",     2),   # ▶
+            ("  ☰  Signatures",     3),   # ☰
+            ("  ◈  Attack Chain",   4),   # ◈
+            ("  ☷  Log",            5),   # ☷
         ]
         for label, idx in items:
             item = QListWidgetItem(label)
@@ -184,13 +195,13 @@ class IDSMainWindow(QMainWindow):
 
     def _on_sidebar_changed(self, row: int):
         """侧边栏点击处理: 导航或主题切换"""
-        if row == 6:  # Theme toggle
+        if row == 7:  # Theme toggle (after 6 items + 1 separator)
             self._on_toggle_theme()
             # 恢复选中到当前内容页
             self.sidebar.blockSignals(True)
             self.sidebar.setCurrentRow(self.stack.currentIndex())
             self.sidebar.blockSignals(False)
-        elif 0 <= row <= 4:
+        elif 0 <= row <= 5:
             self.stack.setCurrentIndex(row)
 
     # ─── Apple 主题系统 ───
@@ -284,6 +295,12 @@ class IDSMainWindow(QMainWindow):
         self.btn_replay.clicked.connect(self._on_replay_pcap)
         layout.addWidget(self.btn_replay)
 
+        # Demo 按钮 (动态流量生成)
+        self.btn_demo = QPushButton("▶  Demo")
+        self.btn_demo.setObjectName("ctrlBtn")
+        self.btn_demo.clicked.connect(self._on_demo)
+        layout.addWidget(self.btn_demo)
+
         layout.addStretch()
 
         # 状态指示
@@ -324,17 +341,17 @@ class IDSMainWindow(QMainWindow):
             cards_layout.addWidget(card)
         layout.addLayout(cards_layout)
 
-        # ─── 下方: 最近告警 + 实时流量 ───
-        splitter = QSplitter(Qt.Horizontal)
+        # ─── 下方: 最近告警 + 实时流量 (上下两行) ───
 
-        # 最近告警卡片
+        # 行 1: 最近告警 (高度 250px)
         alert_card = QFrame()
         alert_card.setObjectName("contentCard")
         alert_card_layout = QVBoxLayout(alert_card)
-        alert_card_layout.setContentsMargins(16, 12, 16, 12)
+        alert_card_layout.setContentsMargins(12, 8, 12, 8)
 
         alert_title = QLabel("Recent Alerts")
         alert_title.setObjectName("sectionTitle")
+        alert_title.setStyleSheet("font-size: 14px; font-weight: 700; padding-bottom: 2px;")
         alert_card_layout.addWidget(alert_title)
 
         self.table_recent = QTableWidget()
@@ -345,10 +362,12 @@ class IDSMainWindow(QMainWindow):
         self.table_recent.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeToContents)
         self.table_recent.setAlternatingRowColors(True)
+        self.table_recent.setMinimumHeight(180)  # show 7 rows
+        self.table_recent.cellDoubleClicked.connect(self._on_alert_double_click)
         alert_card_layout.addWidget(self.table_recent)
-        splitter.addWidget(alert_card)
+        layout.addWidget(alert_card)
 
-        # 实时流量卡片
+        # 行 2: 实时流量 (折线图 + 指标 + TOP 来源)
         traffic_card = QFrame()
         traffic_card.setObjectName("contentCard")
         traffic_layout = QVBoxLayout(traffic_card)
@@ -358,7 +377,7 @@ class IDSMainWindow(QMainWindow):
         traffic_title.setObjectName("sectionTitle")
         traffic_layout.addWidget(traffic_title)
 
-        # PPS 折线图
+        # PPS/BPS 折线图
         if HAS_PYQTCHART:
             self._pps_series = QLineSeries()
             self._pps_series.setName("PPS")
@@ -397,6 +416,7 @@ class IDSMainWindow(QMainWindow):
             self._pps_chart_view = QChartView(self._pps_chart)
             self._pps_chart_view.setRenderHint(QPainter.Antialiasing)
             self._pps_chart_view.setMinimumHeight(200)
+            self._pps_chart_view.setMaximumHeight(280)
             traffic_layout.addWidget(self._pps_chart_view)
         else:
             self._pps_chart_view = None
@@ -408,8 +428,10 @@ class IDSMainWindow(QMainWindow):
         self.lbl_conn = QLabel("Conn: 0")
         self.lbl_hosts = QLabel("Hosts: 0")
         self.lbl_streams = QLabel("TCP: 0")
+        self.lbl_ano = QLabel("Anomaly: 0")
+        self.lbl_gen = QLabel("Demo: OFF")
         for lbl in [self.lbl_pps, self.lbl_bps, self.lbl_conn,
-                     self.lbl_hosts, self.lbl_streams]:
+                     self.lbl_hosts, self.lbl_streams, self.lbl_ano, self.lbl_gen]:
             lbl.setStyleSheet("font-size: 15px; padding: 4px 10px; "
                             "background-color: " +
                             (LIGHT_THEME['alternateBase'] if self._current_theme == 'light'
@@ -423,11 +445,10 @@ class IDSMainWindow(QMainWindow):
         traffic_layout.addWidget(QLabel("Top Attack Sources:"))
         self.text_top_ip = QTextEdit()
         self.text_top_ip.setReadOnly(True)
-        self.text_top_ip.setMaximumHeight(90)
+        self.text_top_ip.setMaximumHeight(100)
         traffic_layout.addWidget(self.text_top_ip)
 
-        splitter.addWidget(traffic_card)
-        layout.addWidget(splitter)
+        layout.addWidget(traffic_card)
 
         return page
 
@@ -448,23 +469,27 @@ class IDSMainWindow(QMainWindow):
         card.setObjectName("contentCard")
         card_layout = QVBoxLayout(card)
 
-        # 筛选栏
+        # 筛选栏 (下拉变化即筛选, 无需 Filter 按钮)
         filter_bar = QHBoxLayout()
         filter_bar.addWidget(QLabel("Severity:"))
         self.cmb_severity = QComboBox()
+        self.cmb_severity.setObjectName("appleCombo")
         self.cmb_severity.addItems(["All", "critical", "high", "medium", "low"])
+        self.cmb_severity.currentTextChanged.connect(self._on_filter_alerts)
         filter_bar.addWidget(self.cmb_severity)
 
         filter_bar.addWidget(QLabel("Category:"))
         self.cmb_category = QComboBox()
+        self.cmb_category.setObjectName("appleCombo")
         self.cmb_category.addItems(
             ["All", "sql_injection", "xss", "web_attack",
              "brute_force", "backdoor", "scan", "dos"])
+        self.cmb_category.currentTextChanged.connect(self._on_filter_alerts)
         filter_bar.addWidget(self.cmb_category)
 
-        self.btn_filter = QPushButton("Filter")
-        self.btn_filter.clicked.connect(self._on_filter_alerts)
-        filter_bar.addWidget(self.btn_filter)
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_refresh.clicked.connect(self._on_filter_alerts)
+        filter_bar.addWidget(self.btn_refresh)
 
         self.btn_export = QPushButton("Export JSON")
         self.btn_export.clicked.connect(self._on_export_alerts_tab)
@@ -481,6 +506,7 @@ class IDSMainWindow(QMainWindow):
              "Attack Name", "Src IP", "Dst IP:Port"])
         self.table_alerts.horizontalHeader().setStretchLastSection(True)
         self.table_alerts.setAlternatingRowColors(True)
+        self.table_alerts.cellDoubleClicked.connect(self._on_alert_double_click)
         card_layout.addWidget(self.table_alerts)
 
         layout.addWidget(card)
@@ -571,8 +597,7 @@ class IDSMainWindow(QMainWindow):
 
         self.text_top_src = QTextEdit()
         self.text_top_src.setReadOnly(True)
-        self.text_top_src.setMaximumHeight(150)
-        top_layout.addWidget(self.text_top_src)
+        top_layout.addWidget(self.text_top_src, 1)  # stretch to fill
 
         self.btn_refresh_stats = QPushButton("Refresh Statistics")
         self.btn_refresh_stats.clicked.connect(self._refresh_statistics)
@@ -623,6 +648,224 @@ class IDSMainWindow(QMainWindow):
 
         layout.addWidget(card)
         return page
+
+    # ─── Attack Chain 页 ───
+
+    def _create_attack_chain_tab(self) -> QWidget:
+        """攻击链可视化面板 — QGraphicsView 节点-边图"""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+
+        # 标题 + 图例
+        header = QHBoxLayout()
+        title = QLabel("Attack Chain Visualization")
+        title.setStyleSheet("font-size: 36px; font-weight: 700; padding-bottom: 4px;")
+        header.addWidget(title)
+        header.addStretch()
+
+        # 图例
+        legend_colors = [
+            ("Recon", QColor("#FFCC00")),
+            ("Exploit", QColor("#FF9500")),
+            ("C2/Persist", QColor("#FF3B30")),
+            ("Lateral", QColor("#AF52DE")),
+        ]
+        for name, color in legend_colors:
+            lbl = QLabel(" ■ " + name)
+            lbl.setStyleSheet(
+                "color: {0}; font-size: 14px; font-weight: 600; padding: 2px 8px;".format(
+                    color.name()))
+            header.addWidget(lbl)
+        layout.addLayout(header)
+
+        # QGraphicsView
+        self._chain_scene = QGraphicsScene()
+        self._chain_view = QGraphicsView(self._chain_scene)
+        self._chain_view.setRenderHint(QPainter.Antialiasing)
+        self._chain_view.setMinimumHeight(400)
+        self._chain_view.setStyleSheet(
+            "QGraphicsView { border: 1px solid #E5E5EA; border-radius: 8px; "
+            "background-color: " +
+            (LIGHT_THEME['base'] if self._current_theme == 'light'
+             else DARK_THEME['base']) + "; }")
+        layout.addWidget(self._chain_view)
+
+        # 刷新按钮
+        btn_row = QHBoxLayout()
+        self.btn_refresh_chain = QPushButton("Refresh Attack Chain")
+        self.btn_refresh_chain.clicked.connect(self._refresh_attack_chain)
+        btn_row.addWidget(self.btn_refresh_chain)
+        btn_row.addStretch()
+        self.lbl_chain_info = QLabel("No attack chain data available")
+        self.lbl_chain_info.setStyleSheet("font-size: 14px; padding: 4px 8px; color: #86868B;")
+        btn_row.addWidget(self.lbl_chain_info)
+        layout.addLayout(btn_row)
+
+        return page
+
+    def _refresh_attack_chain(self):
+        """从告警数据绘制攻击链可视化"""
+        self._chain_scene.clear()
+        if self.engine is None:
+            self.lbl_chain_info.setText("No engine connected")
+            return
+
+        # 获取最近告警，按 src_ip 分组
+        alerts = self.engine.alert_mgr.get_alerts(limit=500)
+        if not alerts:
+            self.lbl_chain_info.setText("No alerts to visualize")
+            return
+
+        # 按 src_ip 分组，按时间排序
+        from collections import defaultdict
+        chains = defaultdict(list)
+        for a in alerts:
+            # 映射告警类别到 MITRE ATT&CK 阶段
+            phase = self._map_category_to_phase(a.category)
+            chains[a.src_ip].append({
+                'time': a.timestamp,
+                'dst': a.dst_ip,
+                'category': a.category,
+                'severity': a.severity,
+                'phase': phase,
+                'desc': a.description or a.signature_name,
+            })
+
+        # 过滤：至少 2 步的 src_ip 才画出
+        active = {ip: steps for ip, steps in chains.items() if len(steps) >= 2}
+        if not active:
+            self.lbl_chain_info.setText("No multi-step attack chains found (need >=2 steps)")
+            # Show note
+            note = self._chain_scene.addText(
+                "No attack chains detected yet.\n"
+                "Attack chains appear when the same source IP triggers\n"
+                "multiple different alert categories within the time window.",
+                QFont("Segoe UI", 14))
+            note.setDefaultTextColor(QColor("#86868B"))
+            note.setPos(100, 150)
+            return
+
+        # 绘制
+        phase_colors = {
+            'recon': QColor("#FFCC00"),
+            'exploit': QColor("#FF9500"),
+            'c2': QColor("#FF3B30"),
+            'lateral': QColor("#AF52DE"),
+            'unknown': QColor("#86868B"),
+        }
+
+        y_start = 30
+        x_start = 80
+        x_step = 300
+        y_step = 120
+
+        for chain_idx, (src_ip, steps) in enumerate(sorted(active.items())):
+            # 排序：按时间
+            steps.sort(key=lambda s: s['time'])
+
+            # 源 IP 节点 (左侧)
+            src_x = x_start + chain_idx * x_step
+            src_y = y_start
+
+            # Source node
+            src_ellipse = QGraphicsEllipseItem(QRectF(src_x - 30, src_y - 15, 60, 30))
+            src_ellipse.setBrush(QBrush(QColor("#007AFF")))
+            src_ellipse.setPen(QPen(QColor("#0055CC"), 2))
+            self._chain_scene.addItem(src_ellipse)
+
+            src_text = QGraphicsTextItem(src_ip)
+            src_text.setDefaultTextColor(QColor("#FFFFFF"))
+            src_text.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            src_text.setPos(src_x - 28, src_y - 10)
+            self._chain_scene.addItem(src_text)
+
+            prev_x = src_x
+            prev_y = src_y + 15
+
+            for step_idx, step in enumerate(steps):
+                dest_x = prev_x
+                dest_y = prev_y + y_step
+
+                # 目标节点
+                color = phase_colors.get(step['phase'], phase_colors['unknown'])
+                dst_ellipse = QGraphicsEllipseItem(
+                    QRectF(dest_x - 35, dest_y - 15, 70, 30))
+                dst_ellipse.setBrush(QBrush(color))
+                dst_ellipse.setPen(QPen(color.darker(120), 2))
+                self._chain_scene.addItem(dst_ellipse)
+
+                # 目标标签 (dst_ip + category)
+                label_text = "{0}:{1}".format(
+                    step['dst'][:15], step['category'][:12])
+                dst_text = QGraphicsTextItem(label_text)
+                dst_text.setDefaultTextColor(QColor("#1D1D1F"))
+                dst_text.setFont(QFont("Segoe UI", 8))
+                dst_text.setPos(dest_x - 30, dest_y - 10)
+                self._chain_scene.addItem(dst_text)
+
+                # 连线
+                line = QGraphicsLineItem(
+                    QLineF(QPointF(prev_x, prev_y),
+                           QPointF(dest_x, dest_y)))
+                line.setPen(QPen(color, 2, Qt.DashLine))
+                self._chain_scene.addItem(line)
+
+                # 时间标签
+                time_str = time.strftime('%H:%M:%S',
+                                         time.localtime(step['time']))
+                time_text = QGraphicsTextItem(time_str)
+                time_text.setDefaultTextColor(QColor("#86868B"))
+                time_text.setFont(QFont("Segoe UI", 7))
+                time_text.setPos(dest_x - 45, dest_y + 15)
+                self._chain_scene.addItem(time_text)
+
+                # 阶段标签
+                phase_text = QGraphicsTextItem(step['phase'])
+                phase_text.setDefaultTextColor(color)
+                phase_text.setFont(QFont("Segoe UI", 8, QFont.Bold))
+                phase_text.setPos(dest_x - 40, dest_y - 28)
+                self._chain_scene.addItem(phase_text)
+
+                prev_y = dest_y + 15
+                prev_x = dest_x
+
+            # 攻击链完成度
+            unique_phases = len(set(s['phase'] for s in steps))
+            chain_level = ("CRITICAL" if unique_phases >= 4 else
+                           "HIGH" if unique_phases >= 3 else "MEDIUM")
+            level_color = ("#FF3B30" if chain_level == "CRITICAL" else
+                           "#FF9500" if chain_level == "HIGH" else "#FFCC00")
+            level_text = QGraphicsTextItem(
+                "Level: {0} ({1} phases)".format(chain_level, unique_phases))
+            level_text.setDefaultTextColor(QColor(level_color))
+            level_text.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            level_text.setPos(src_x + 80, src_y - 15)
+            self._chain_scene.addItem(level_text)
+
+        count = len(active)
+        total_steps = sum(len(s) for s in active.values())
+        max_phases = max(
+            len(set(s['phase'] for s in st)) for st in active.values())
+        self.lbl_chain_info.setText(
+            "{0} chains | {1} steps | max {2} phases".format(
+                count, total_steps, max_phases))
+
+    @staticmethod
+    def _map_category_to_phase(category: str) -> str:
+        """将告警类别映射到 MITRE ATT&CK 攻击阶段"""
+        mapping = {
+            'scan': 'recon',
+            'sql_injection': 'exploit',
+            'xss': 'exploit',
+            'web_attack': 'exploit',
+            'webshell': 'exploit',
+            'brute_force': 'exploit',
+            'backdoor': 'c2',
+            'dos': 'exploit',
+        }
+        return mapping.get(category, 'unknown')
 
     # ─── Log 页 ───
 
@@ -792,6 +1035,24 @@ class IDSMainWindow(QMainWindow):
                 )
                 thread.start()
 
+    def _on_demo(self):
+        """Demo 模式: 启动/停止动态流量生成器, 实时产生攻击+正常混合流量"""
+        if self.engine is None:
+            self._log("[ERROR] No engine, cannot start demo")
+            return
+
+        gen = self.demo_generator
+        if gen is not None and gen.is_running:
+            gen.stop()
+            self._log("Demo stopped: %d packets sent" % gen.get_stats()["sent"])
+            self.btn_demo.setText("▶  Demo")
+            return
+
+        self.demo_generator = TrafficGenerator(self.engine)
+        self.demo_generator.start(pps=2.0)
+        self.btn_demo.setText("■  Stop Demo")
+        self._log("Demo started: 2 pps attack+normal mixed traffic")
+
     def _on_export_alerts(self):
         """导出全部告警 (菜单)"""
         filepath, _ = QFileDialog.getSaveFileName(
@@ -898,6 +1159,129 @@ class IDSMainWindow(QMainWindow):
             self._log("Signature reload failed: " + str(e))
             QMessageBox.warning(self, "Reload Failed", str(e))
 
+    def _on_alert_double_click(self, row: int, col: int):
+        """双击告警表格行 → 弹窗显示完整告警详情 + 威胁情报"""
+        table = self.sender()
+        if table is None or self.engine is None:
+            return
+
+        # 从表格获取 alert_id
+        if table is self.table_alerts:
+            id_item = table.item(row, 0)
+            if id_item is None:
+                return
+            alert_id = int(id_item.text())
+            alert = self.engine.alert_mgr.get_alert_by_id(alert_id)
+        elif table is self.table_recent:
+            alerts = list(self.engine.alert_mgr.recent_alerts)
+            if row >= len(alerts):
+                return
+            alert = alerts[-20 + row] if len(alerts) > 20 else alerts[row]
+        else:
+            return
+
+        if alert is None:
+            return
+
+        # 查询威胁情报
+        threat_info = self._query_threat_intel(alert.src_ip)
+
+        # 构建详细内容
+        sev_color = {'critical': '#FF3B30', 'high': '#FF9500',
+                     'medium': '#FFCC00', 'low': '#007AFF'}.get(
+                         alert.severity, '#86868B')
+
+        detail_html = (
+            "<hr style='border:1px solid #E5E5EA'>"
+            "<table cellspacing=8>"
+            "<tr><td><b>Alert ID:</b></td><td>{0}</td></tr>"
+            "<tr><td><b>Time:</b></td><td>{1}</td></tr>"
+            "<tr><td><b>Source:</b></td><td>{2}</td></tr>"
+            "<tr><td><b>Category:</b></td><td>{3}</td></tr>"
+            "<tr><td><b>Severity:</b></td><td><span style='color:{5};font-weight:bold'>{4}</span></td></tr>"
+            "<tr><td><b>Signature ID:</b></td><td>{6}</td></tr>"
+            "<tr><td><b>Src IP:</b></td><td>{7}</td></tr>"
+            "<tr><td><b>Dst IP:</b></td><td>{8}:{9}</td></tr>"
+            "<tr><td><b>Protocol:</b></td><td>{10}</td></tr>"
+            "<tr><td><b>Matched Pattern:</b></td><td><code>{11}</code></td></tr>"
+            "<tr><td><b>Matched Text:</b></td><td><code>{12}</code></td></tr>"
+        ).format(
+            alert.alert_id,
+            time.strftime('%Y-%m-%d %H:%M:%S',
+                          time.localtime(alert.timestamp)),
+            alert.source, alert.category, alert.severity, sev_color,
+            alert.signature_id, alert.src_ip, alert.dst_ip,
+            alert.dst_port, alert.protocol or 'TCP',
+            alert.matched_pattern[:150] if alert.matched_pattern else '-',
+            alert.matched_text[:150] if alert.matched_text else '-',
+        )
+
+        # 威胁情报行
+        if threat_info and threat_info.get('available'):
+            risk_color = '#FF3B30' if threat_info.get('risk') == 'HIGH' else '#34C759'
+            detail_html += (
+                "<tr><td colspan='2'><hr style='border:1px solid #E5E5EA'>"
+                "<b style='font-size:14px'>Threat Intelligence</b></td></tr>"
+                "<tr><td><b>AbuseIPDB Score:</b></td><td>{t[abuseipdb_score]}/100</td></tr>"
+                "<tr><td><b>OTX Pulses:</b></td><td>{t[otx_pulses]} community reports</td></tr>"
+                "<tr><td><b>Combined Risk:</b></td><td><span style='color:{rc};font-weight:bold'>{t[combined_risk]}</span></td></tr>"
+            ).format(
+                t=threat_info,
+                rc=risk_color,
+            )
+        else:
+            detail_html += (
+                "<tr><td colspan='2'><hr style='border:1px solid #E5E5EA'>"
+                "<span style='color:#86868B'>Threat Intel: No known malicious reputation</span></td></tr>"
+            )
+
+        detail_html += "</table>"
+
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Alert Detail")
+        dlg.setIcon(QMessageBox.Information)
+        dlg.setText("<b style='font-size:16px'>{0}</b>".format(
+            alert.signature_name or alert.description))
+        dlg.setInformativeText(detail_html)
+        dlg.setStandardButtons(QMessageBox.Ok)
+        dlg.exec_()
+
+    def _query_threat_intel(self, src_ip: str) -> dict:
+        """查询来源 IP 的威胁情报信息"""
+        # 优先使用本地威胁情报模块
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+            from tools.threat_intel import ThreatIntel
+            ti = ThreatIntel()
+            result = ti.check_ip(src_ip)
+            if result and result.get('score', 0) > 0:
+                return {
+                    'available': True,
+                    'abuseipdb_score': result.get('score', 0),
+                    'otx_pulses': result.get('pulse_count', 0),
+                    'combined_risk': 'HIGH' if result.get('score', 0) > 50 else 'LOW',
+                    'category': result.get('category', ''),
+                }
+        except Exception:
+            pass
+
+        # Fallback: 检查本地黑名单
+        local_blacklist = {
+            '10.0.0.55': 85, '10.0.0.99': 90,
+            '10.0.0.77': 75,
+        }
+        if src_ip in local_blacklist:
+            score = local_blacklist[src_ip]
+            return {
+                'available': True,
+                'abuseipdb_score': score,
+                'otx_pulses': 0,
+                'combined_risk': 'HIGH' if score > 50 else 'LOW',
+                'category': 'local_blacklist',
+            }
+
+        return {'available': False}
+
     def _on_about(self):
         """关于对话框"""
         QMessageBox.about(
@@ -975,13 +1359,25 @@ class IDSMainWindow(QMainWindow):
                 self.lbl_conn.setText("Conn: 0")
                 self.lbl_streams.setText("TCP: 0")
 
-            # 从异常检测器获取主机数
+            # 从异常检测器获取主机数 + 异常告警数
             if self.engine and self.engine.anomaly_detector:
                 ad = self.engine.anomaly_detector.get_statistics()
                 self.lbl_hosts.setText(
                     "Hosts: {0}".format(ad.get('total_hosts_tracked', 0)))
+                self.lbl_ano.setText(
+                    "Anomaly: {0}".format(ad.get('total_alerts', 0)))
             else:
                 self.lbl_hosts.setText("Hosts: 0")
+                self.lbl_ano.setText("Anomaly: 0")
+
+            # Demo 模式生成器状态
+            gen = self.demo_generator
+            if gen is not None and gen._running:
+                gs = gen.get_stats()
+                self.lbl_gen.setText(
+                    "Demo: {0}pkt".format(gs["sent"]))
+            else:
+                self.lbl_gen.setText("Demo: OFF")
 
             # 更新 PPS/BPS 历史 + 实时折线图
             self._pps_history.append(current_pps)
@@ -1031,6 +1427,10 @@ class IDSMainWindow(QMainWindow):
             self._refresh_statistics()
             if self.stack.currentIndex() == 1:
                 self._on_filter_alerts()
+
+        # 每 10 秒刷新攻击链面板
+        if self._chart_time_counter % 10 == 0 and self.stack.currentIndex() == 4:
+            self._refresh_attack_chain()
 
     def _update_realtime_chart(self):
         """更新实时 PPS/BPS 折线图 (Fix #3: 添加 BPS 线)"""

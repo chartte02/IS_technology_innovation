@@ -256,29 +256,55 @@ def build_stylesheet(c: dict) -> str:
         text-transform: uppercase;
     }}
 
-    /* ===== 下拉框 ===== */
+    /* ===== 下拉框 (Apple 风格) ===== */
     QComboBox {{
         background-color: {c['card']};
         border: 1px solid {c['cardBorder']};
-        border-radius: 6px;
-        padding: 6px 12px;
+        border-radius: 8px;
+        padding: 8px 36px 8px 14px;
         color: {c['text']};
         font-size: {FONT_BTN};
+        min-width: 100px;
     }}
     QComboBox:hover {{
         border-color: {c['highlight']};
+        background-color: {c['alternateBase']};
     }}
     QComboBox::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+        width: 32px;
         border: none;
-        width: 28px;
+        border-left: 1px solid {c['cardBorder']};
+        border-top-right-radius: 7px;
+        border-bottom-right-radius: 7px;
+    }}
+    QComboBox::down-arrow {{
+        width: 10px;
+        height: 10px;
     }}
     QComboBox QAbstractItemView {{
         background-color: {c['card']};
         border: 1px solid {c['cardBorder']};
-        border-radius: 6px;
+        border-radius: 8px;
+        padding: 4px 0;
+        margin-top: 4px;
         selection-background-color: {c['highlight']};
         selection-color: white;
         font-size: {FONT_BTN};
+        outline: none;
+    }}
+    QComboBox QAbstractItemView::item {{
+        padding: 8px 14px;
+        min-height: 28px;
+    }}
+    QComboBox QAbstractItemView::item:hover {{
+        background-color: {c['alternateBase']};
+    }}
+
+    /* 告警页面下拉框 (略宽) */
+    QComboBox#appleCombo {{
+        min-width: 130px;
     }}
 
     /* ===== 文本输入 ===== */
