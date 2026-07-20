@@ -11,6 +11,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Set, Optional, Tuple
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,6 +75,147 @@ class BaselineProfile:
         self.learning_duration: float = 0.0
 
 
+class AdaptiveThresholdManager:
+    """
+    动态阈值自适应管理器 (μ±kσ 方案)
+
+    持续观察各主机的流量指标，用均值(μ)和标准差(σ)建模正常行为，
+    动态计算检测阈值: threshold = μ + k * σ
+
+    优势:
+    - 自动适应不同网络环境，无需手动调参
+    - 流量模式变化后阈值自动跟随
+    - 针对 slow drift（缓慢漂移）天然稳健
+
+    使用方式:
+        adaptive = AdaptiveThresholdManager(k=3.0, min_samples=10)
+        adaptive.observe('port_scan', 15)   # 观察一个值
+        th = adaptive.get_threshold('port_scan', default=20)
+    """
+
+    def __init__(self, k: float = 3.0, min_samples: int = 10,
+                 enabled: bool = True, window_size: int = 200):
+        """
+        Args:
+            k: 标准差倍数，3 = μ+3σ（99.7% 正常值在此范围内）
+            min_samples: 开始计算动态阈值的最小样本数
+            enabled: 是否启用自适应
+            window_size: 滑动窗口大小，保留最近 N 个观察值
+        """
+        self.k = k
+        self.min_samples = min_samples
+        self.enabled = enabled
+        self.window_size = window_size
+
+        # metric_name → list of observed values
+        self._observations: Dict[str, List[float]] = defaultdict(list)
+        # metric_name → 当前 (mean, std) 缓存
+        self._computed: Dict[str, Tuple[float, float]] = {}
+
+        logger.info(
+            f"自适应阈值管理器: enabled={enabled}, "
+            f"k={k}, min_samples={min_samples}")
+
+    # ─── 观察与计算 ───
+
+    def observe(self, metric: str, value: float):
+        """观察一个指标值，用于更新统计"""
+        obs = self._observations[metric]
+        obs.append(value)
+        # 滑动窗口：超出后丢弃最早的一半，保持统计新鲜度
+        if len(obs) > self.window_size:
+            self._observations[metric] = obs[-(self.window_size // 2):]
+        self._recompute(metric)
+
+    def observe_batch(self, metric: str, values: List[float]):
+        """批量观察"""
+        for v in values:
+            self.observe(metric, v)
+
+    def _recompute(self, metric: str):
+        """重新计算均值和样本标准差"""
+        values = self._observations[metric]
+        if len(values) >= 2:
+            mean = float(np.mean(values))
+            std = float(np.std(values, ddof=1))
+            self._computed[metric] = (mean, std)
+
+    # ─── 阈值查询 ───
+
+    def get_threshold(self, metric: str, default: float = 20.0,
+                      lower_bound: float = None, upper_bound: float = None) -> float:
+        """
+        获取动态阈值。
+
+        Returns:
+            threshold = mean + k * std，但受 lower_bound / upper_bound 约束。
+            数据不足时返回 default。
+        """
+        if not self.enabled or metric not in self._computed:
+            return default
+
+        mean, std = self._computed[metric]
+        n = len(self._observations.get(metric, []))
+        if n < self.min_samples:
+            return default
+
+        threshold = mean + self.k * std
+
+        # 约束边界
+        if lower_bound is not None:
+            threshold = max(threshold, lower_bound)
+        if upper_bound is not None:
+            threshold = min(threshold, upper_bound)
+
+        return threshold
+
+    def get_deviation(self, metric: str, value: float) -> float:
+        """
+        获取当前值相对于基线的偏差倍数。
+        Returns: (value - mean) / max(std, 1e-10)
+        """
+        if metric in self._computed:
+            mean, std = self._computed[metric]
+            return (value - mean) / max(std, 1e-10)
+        return 0.0
+
+    # ─── 统计与重置 ───
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """获取所有指标的自适应阈值统计"""
+        stats = {}
+        for metric in sorted(self._observations.keys()):
+            obs = self._observations[metric]
+            if metric in self._computed:
+                mean, std = self._computed[metric]
+                stats[metric] = {
+                    'mean': round(mean, 2),
+                    'std': round(std, 2),
+                    'samples': len(obs),
+                    'k': self.k,
+                    'dynamic_threshold': round(mean + self.k * std, 2),
+                    'threshold_range': (
+                        round(mean - self.k * std, 2),
+                        round(mean + self.k * std, 2),
+                    ),
+                }
+            else:
+                stats[metric] = {
+                    'samples': len(obs),
+                    'status': 'collecting',
+                }
+        return stats
+
+    def reset(self, metric: str = None):
+        """重置观察数据"""
+        if metric:
+            self._observations.pop(metric, None)
+            self._computed.pop(metric, None)
+        else:
+            self._observations.clear()
+            self._computed.clear()
+
+
 class AnomalyDetector:
     """
     异常检测引擎
@@ -111,6 +254,44 @@ class AnomalyDetector:
             'syn_ratio', 0.8)
         self.pps_threshold = cfg.get('ddos', {}).get(
             'pps_threshold', 10000)
+
+        # ─── 自适应阈值（选做：μ±kσ 动态阈值） ───
+        adaptive_cfg = cfg.get('adaptive_threshold', {})
+        self.adaptive = AdaptiveThresholdManager(
+            k=adaptive_cfg.get('k', 3.0),
+            min_samples=adaptive_cfg.get('min_samples', 10),
+            enabled=adaptive_cfg.get('enabled', True),
+            window_size=adaptive_cfg.get('window_size', 200),
+        )
+        if self.adaptive.enabled:
+            logger.info(
+                f"自适应阈值已启用: μ±{self.adaptive.k}σ, "
+                f"min_samples={self.adaptive.min_samples}")
+
+        # ─── ML 异常检测 ───
+        two_stage_enabled = cfg.get('two_stage', {}).get('enabled', False)
+        ml_enabled = cfg.get('ml_detection', {}).get('enabled', False)
+        self.ml_detector = None
+        self.two_stage = None
+
+        if two_stage_enabled:
+            from core.ml_anomaly import TwoStageDetector
+            ts_cfg = cfg.get('two_stage', {})
+            self.two_stage = TwoStageDetector(ts_cfg)
+            logger.info("两阶段检测器已启用 (IF + RF)")
+
+            # 两阶段模式下，RF 需要喂养标签样本
+            self._two_stage_feeding = ts_cfg.get('feeding', True)
+            self._two_stage_pos_feeds = 0
+            self._two_stage_neg_feeds = 0
+            self._two_stage_min_feed = ts_cfg.get('min_feed', 50)
+        elif ml_enabled:
+            from core.ml_anomaly import MLAnomalyDetector
+            ml_cfg = cfg.get('ml_detection', {})
+            self.ml_detector = MLAnomalyDetector(ml_cfg)
+            logger.info("ML 异常检测器已启用 (Isolation Forest)")
+        else:
+            self.ml_detector = None
 
         # ─── 状态 ───
         # IP → HostStats（按窗口分桶）
@@ -181,11 +362,76 @@ class AnomalyDetector:
             if payload:
                 self._check_login_pattern(src_stats, payload)
 
+            # ML 特征收集（训练模式下）
+            if self.ml_detector and self.ml_detector.is_ready() is False:
+                if not hasattr(self, '_ml_collected'):
+                    self._ml_collected = set()
+                if src_ip not in self._ml_collected:
+                    self.ml_detector.collect_features(src_stats)
+                    self._ml_collected.add(src_ip)
+                    # 达到样本数后自动训练
+                    if len(self._ml_collected) >= (getattr(self.ml_detector, 'min_samples', 20)):
+                        self.ml_detector.train()
+
+            # 两阶段模式: 自动收集无监督特征
+            if self.two_stage and self.two_stage.if_detector.is_ready() is False:
+                if not hasattr(self, '_ts_collected'):
+                    self._ts_collected = set()
+                if src_ip not in self._ts_collected:
+                    self.two_stage.if_detector.collect_features(src_stats)
+                    self._ts_collected.add(src_ip)
+                    if len(self._ts_collected) >= (
+                            getattr(self.two_stage.if_detector, 'min_samples', 20)):
+                        self.two_stage.if_detector.train()
+
             # 更新目标 IP 统计（收包情况）
             dst_stats = self._get_or_create_host(dst_ip)
             dst_stats.packet_count += 1
             dst_stats.bytes_received += payload_len
             dst_stats.last_seen = timestamp
+
+    # ─── 两阶段模式 ───
+
+    def feed_two_stage(self, alert: Dict, host_stats=None):
+        """
+        向两阶段检测器喂标签数据。
+        规则引擎触发的告警 → 正样本；无告警 → 负样本。
+
+        应在 check_all() 后调用，传入规则引擎已确认的告警信息。
+        """
+        if self.two_stage is None:
+            return
+        if not self._two_stage_feeding:
+            return
+
+        src_ip = alert.get('src_ip', '')
+        if not src_ip or src_ip in self.whitelist_ips:
+            return
+
+        stats = host_stats or self._stats.get(src_ip)
+        if stats is None:
+            return
+
+        # 规则引擎触发的告警 = 正样本（真攻击）
+        source = alert.get('_source', '')
+        is_attack = source == 'misuse' or alert.get('severity') in ('critical', 'high')
+
+        self.two_stage.feed_labeled(stats, is_attack=True if is_attack else False)
+        if is_attack:
+            self._two_stage_pos_feeds += 1
+        else:
+            self._two_stage_neg_feeds += 1
+
+        # 当正负样本都充足时自动训练 RF
+        total = self._two_stage_pos_feeds + self._two_stage_neg_feeds
+        if (total >= self._two_stage_min_feed
+                and not self.two_stage._rf_trained
+                and self._two_stage_pos_feeds >= 10
+                and self._two_stage_neg_feeds >= 10):
+            logger.info(
+                f"两阶段喂养完成: 正={self._two_stage_pos_feeds}, "
+                f"负={self._two_stage_neg_feeds}, 开始 RF 训练...")
+            self.two_stage.train_rf()
 
     # ─── 异常检测 ───
 
@@ -242,85 +488,171 @@ class AnomalyDetector:
             if bd:
                 alerts.append(bd)
 
+        # 7. 两阶段 ML 异常检测 (IF + RF)
+        if self.two_stage:
+            verdict, conf = self.two_stage.predict(stats)
+            if verdict in ('attack', 'unsure'):
+                severity = 'medium' if verdict == 'attack' else 'low'
+                alerts.append({
+                    'type': 'two_stage_anomaly',
+                    'category': 'anomaly',
+                    'severity': severity,
+                    'src_ip': ip,
+                    'description': (
+                        f'两阶段检测: {verdict} (置信度: {conf:.2f})'
+                        if verdict == 'attack' else
+                        f'IF 异常但 RF 未确认 (分数: {conf:.2f})'
+                    ),
+                    'detail': {
+                        'verdict': verdict,
+                        'confidence': round(conf, 4),
+                        'two_stage': True,
+                    },
+                    'timestamp': time.time(),
+                })
+
+        # 8. 单阶段 ML 异常检测（IF 模式）
+        if self.ml_detector and self.ml_detector.is_ready():
+            ml_pred = self.ml_detector.predict(host_stats=stats, ip=ip, use_cache=True)
+            if ml_pred == -1:
+                score = self.ml_detector.decision_score(stats)
+                alerts.append({
+                    'type': 'ml_anomaly',
+                    'category': 'anomaly',
+                    'severity': 'medium',
+                    'src_ip': ip,
+                    'description': f'ML 模型标记为异常 (分数: {score:.4f})',
+                    'detail': {
+                        'ml_score': score,
+                        'features': self.ml_detector.get_feature_summary(stats),
+                    },
+                    'timestamp': time.time(),
+                })
+
         return alerts
 
     def _check_port_scan(self, ip: str, stats: HostStats) -> Optional[Dict]:
-        """检测端口扫描"""
+        """检测端口扫描（支持自适应阈值）"""
         unique_ports = len(stats.unique_dst_ports)
-        if unique_ports >= self.port_scan_threshold:
+        # 观察并获取动态阈值
+        self.adaptive.observe('port_scan', unique_ports)
+        threshold = self.adaptive.get_threshold(
+            'port_scan', default=self.port_scan_threshold,
+            lower_bound=3,  # 至少 3 个端口
+        )
+        if unique_ports >= threshold:
             return {
                 'type': 'port_scan',
                 'category': 'scan',
                 'severity': 'medium',
                 'src_ip': ip,
-                'description': f'端口扫描: {unique_ports} 个不同端口 (阈值: {self.port_scan_threshold})',
+                'description': f'端口扫描: {unique_ports} 个不同端口 '
+                               f'(阈值: {threshold:.0f}, '
+                               f'原始: {self.port_scan_threshold})',
                 'detail': {'unique_ports': unique_ports,
                             'syn_count': stats.syn_count,
-                            'conn_count': stats.conn_count},
+                            'conn_count': stats.conn_count,
+                            'dynamic_threshold': round(threshold, 1)},
                 'timestamp': time.time(),
             }
         return None
 
     def _check_horizontal_scan(self, ip: str, stats: HostStats) -> Optional[Dict]:
-        """检测横向扫描（同一端口访问大量 IP）"""
+        """检测横向扫描（支持自适应阈值）"""
         unique_ips = len(stats.unique_dst_ips)
-        if unique_ips >= self.horizontal_scan_threshold:
+        self.adaptive.observe('horizontal_scan', unique_ips)
+        threshold = self.adaptive.get_threshold(
+            'horizontal_scan', default=self.horizontal_scan_threshold,
+            lower_bound=3,
+        )
+        if unique_ips >= threshold:
             return {
                 'type': 'horizontal_scan',
                 'category': 'scan',
                 'severity': 'high',
                 'src_ip': ip,
-                'description': f'横向扫描: 访问 {unique_ips} 个不同目标 IP (阈值: {self.horizontal_scan_threshold})',
-                'detail': {'unique_ips': unique_ips},
+                'description': f'横向扫描: 访问 {unique_ips} 个不同目标 IP '
+                               f'(阈值: {threshold:.0f}, '
+                               f'原始: {self.horizontal_scan_threshold})',
+                'detail': {'unique_ips': unique_ips,
+                            'dynamic_threshold': round(threshold, 1)},
                 'timestamp': time.time(),
             }
         return None
 
     def _check_syn_flood(self, ip: str, stats: HostStats) -> Optional[Dict]:
-        """检测 SYN Flood 攻击"""
-        if stats.syn_count >= self.syn_threshold:
-            ratio = stats.syn_count / max(stats.conn_count, 1)
+        """检测 SYN Flood 攻击（支持自适应阈值）"""
+        syn_count = stats.syn_count
+        self.adaptive.observe('syn_flood', syn_count)
+        threshold = self.adaptive.get_threshold(
+            'syn_flood', default=self.syn_threshold,
+            lower_bound=10,
+            upper_bound=100000,
+        )
+        if syn_count >= threshold:
+            ratio = syn_count / max(stats.conn_count, 1)
             if ratio >= self.syn_ratio:
                 return {
                     'type': 'syn_flood',
                     'category': 'dos',
                     'severity': 'critical',
                     'src_ip': ip,
-                    'description': f'SYN Flood: {stats.syn_count} SYN 包 (占比 {ratio:.0%})',
-                    'detail': {'syn_count': stats.syn_count,
+                    'description': f'SYN Flood: {syn_count} SYN 包 '
+                                   f'(占比 {ratio:.0%}, '
+                                   f'阈值: {threshold:.0f})',
+                    'detail': {'syn_count': syn_count,
                                 'total_conn': stats.conn_count,
-                                'ratio': ratio},
+                                'ratio': ratio,
+                                'dynamic_threshold': round(threshold, 1)},
                     'timestamp': time.time(),
                 }
         return None
 
     def _check_brute_force(self, ip: str, stats: HostStats) -> Optional[Dict]:
-        """检测暴力破解"""
-        if stats.login_failures >= self.brute_force_threshold:
+        """检测暴力破解（支持自适应阈值）"""
+        login_failures = stats.login_failures
+        self.adaptive.observe('brute_force', login_failures)
+        threshold = self.adaptive.get_threshold(
+            'brute_force', default=self.brute_force_threshold,
+            lower_bound=2,
+        )
+        if login_failures >= threshold:
             return {
                 'type': 'brute_force',
                 'category': 'brute_force',
                 'severity': 'high',
                 'src_ip': ip,
-                'description': f'暴力破解: {stats.login_failures} 次登录失败 (阈值: {self.brute_force_threshold})',
-                'detail': {'login_failures': stats.login_failures},
+                'description': f'暴力破解: {login_failures} 次登录失败 '
+                               f'(阈值: {threshold:.0f}, '
+                               f'原始: {self.brute_force_threshold})',
+                'detail': {'login_failures': login_failures,
+                            'dynamic_threshold': round(threshold, 1)},
                 'timestamp': time.time(),
             }
         return None
 
     def _check_high_frequency(self, ip: str, stats: HostStats) -> Optional[Dict]:
-        """检测高频流量（可能的 DDoS）"""
+        """检测高频流量（可能的 DDoS，支持自适应阈值）"""
         duration = max(time.time() - self.window_start, 1)
         pps = stats.packet_count / duration
-        if pps >= self.pps_threshold:
+        self.adaptive.observe('high_frequency', pps)
+        threshold = self.adaptive.get_threshold(
+            'high_frequency', default=self.pps_threshold,
+            lower_bound=10,
+        )
+        if pps >= threshold:
             return {
                 'type': 'high_frequency',
                 'category': 'dos',
                 'severity': 'critical',
                 'src_ip': ip,
-                'description': f'异常高频流量: {pps:.0f} pps (阈值: {self.pps_threshold})',
-                'detail': {'pps': pps, 'packets': stats.packet_count,
-                            'duration': duration},
+                'description': f'异常高频流量: {pps:.0f} pps '
+                               f'(阈值: {threshold:.0f}, '
+                               f'原始: {self.pps_threshold})',
+                'detail': {'pps': round(pps, 1),
+                            'packets': stats.packet_count,
+                            'duration': round(duration, 1),
+                            'dynamic_threshold': round(threshold, 1)},
                 'timestamp': time.time(),
             }
         return None
@@ -369,13 +701,27 @@ class AnomalyDetector:
         logger.info("基线学习已开始...")
 
     def stop_learning(self) -> BaselineProfile:
-        """停止学习并生成基线"""
+        """停止学习并生成基线，同时训练 ML 模型"""
         self._learning = False
         duration = time.time() - self._learning_start
         self.baseline = self._compute_baseline(duration)
         logger.info(f"基线学习完成 (持续 {duration:.0f} 秒): "
                      f"平均连接数={self.baseline.avg_conn_count:.1f}")
+
+        # 自动训练 ML 模型
+        if self.ml_detector:
+            self._collect_ml_training_data()
+            self.ml_detector.train()
+
         return self.baseline
+
+    def _collect_ml_training_data(self):
+        """将当前所有主机的统计作为 ML 训练数据收集"""
+        if not self.ml_detector:
+            return
+        with self._lock:
+            for stats in self._stats.values():
+                self.ml_detector.collect_features(stats)
 
     def _compute_baseline(self, duration: float) -> BaselineProfile:
         """从学习数据计算基线"""
@@ -525,13 +871,22 @@ class AnomalyDetector:
     def get_statistics(self) -> Dict[str, Any]:
         """获取异常检测统计"""
         with self._lock:
-            return {
+            stats = {
                 'total_hosts_tracked': len(self._stats),
                 'total_packets_processed': self.total_processed,
                 'total_alerts': self.total_alerts,
                 'window_start': self.window_start,
                 'has_baseline': self.baseline is not None,
             }
+            if self.ml_detector:
+                stats['ml'] = self.ml_detector.get_statistics()
+            if self.adaptive and self.adaptive.enabled:
+                stats['adaptive_threshold'] = self.adaptive.get_statistics()
+            return stats
+
+    def get_adaptive_statistics(self) -> Dict[str, Any]:
+        """获取自适应阈值统计详情"""
+        return self.adaptive.get_statistics() if self.adaptive else {}
 
     def shutdown(self):
         """安全关闭"""

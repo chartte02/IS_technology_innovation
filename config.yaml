@@ -60,6 +60,34 @@ anomaly:
   baseline_learning_period: 3600    # 基线学习时长（秒），建议至少1小时
   baseline_update_interval: 300     # 基线更新间隔（秒）
 
+  # ML 异常检测（PDF必做：Isolation Forest 识别未知攻击）
+  ml_detection:
+    enabled: false                   # 是否启用 ML 检测（需安装 scikit-learn）
+    n_estimators: 100                # Isolation Forest 树的数量
+    contamination: 0.05              # 预期异常比例（默认5%）
+    min_samples: 20                  # 最小训练样本数
+    max_samples: 'auto'              # 每棵树的最大样本数
+    random_state: 42                 # 随机种子（保证可复现）
+
+  # 自适应阈值（选做：μ±kσ 动态阈值）
+  adaptive_threshold:
+    enabled: true                      # 是否启用自适应阈值
+    k: 3.0                             # 标准差倍数，3 = μ+3σ（99.7% 正常范围）
+    min_samples: 10                    # 开始动态计算的最小样本数
+    window_size: 200                   # 滑动窗口大小
+
+  # 两阶段异常检测（IF + RF，参考 R6 两阶段方案）
+  # Stage1: IsolationForest 无监督快速筛选
+  # Stage2: RandomForest 监督精判，降低误报
+  two_stage:
+    enabled: false                     # 是否启用（需安装 scikit-learn）
+    feeding: true                      # 是否自动喂养标签数据（从规则引擎结果提取）
+    min_feed: 50                       # RF 训练前最少喂养样本数
+    rf_n_estimators: 100               # RandomForest 树数
+    rf_max_depth: 10                   # 树的最大深度
+    rf_min_samples_split: 5            # 内部节点最小样本数
+    rf_random_state: 42
+
 # --- 告警配置 ---
 alert:
   enable_console_output: true      # 控制台实时输出
@@ -87,6 +115,33 @@ gui:
 rate_limit:
   max_pps: 20000                # 单IP最大包速率, 0=关闭
   burst: 1000                   # 突发容忍量
+
+# --- 资产重要性配置（PDF必做：误报自动降噪）---
+# 不同重要性的资产，同类告警可升降级处理
+assets:
+  # 高重要性资产：告警自动升级
+  critical:
+    - "192.168.1.0/24"             # 核心服务器网段
+  # 中重要性资产：保持原始 severity
+  important:
+    - "10.0.1.0/24"                # 业务服务器网段
+  # 低重要性资产：告警自动降级
+  normal:
+    - "192.168.100.0/24"           # 客户端子网
+  # 白名单：完全忽略告警
+  whitelist:
+    - "192.168.1.1"                # 安全扫描器 / 监控系统
+
+# --- 攻击链关联分析配置（PDF必做）---
+attack_chain:
+  enabled: false                   # 是否启用攻击链关联
+  time_window: 300                 # 关联时间窗口（秒），同一源 IP 在此窗口内的告警视为同一攻击链
+  min_alerts: 3                    # 最少告警数才构成攻击链
+  stages:                          # 攻击阶段定义
+    - "scan"                       # 侦察扫描
+    - "brute_force"                # 暴力破解 / 漏洞利用
+    - "backdoor"                   # 后门 / C2 通信
+    - "dos"                        # DoS / DDoS 攻击
 
 # --- 威胁情报集成（扩展功能）---
 threat_intel:

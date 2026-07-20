@@ -325,6 +325,126 @@ def test_baseline_learner_save_load() -> dict:
 
 
 # ============================================================
+# 9. 自适应阈值测试（μ±kσ 动态阈值）
+# ============================================================
+
+def test_adaptive_threshold_port_scan() -> dict:
+    """
+    验证自适应阈值：多轮观察建立基线后，动态阈值自动降低，
+    使原本低于固定阈值（50）的端口访问也能触发告警。
+    """
+    detector = AnomalyDetector({
+        'port_scan': {'unique_ports_threshold': 50},  # 固定阈值故意设高
+        'adaptive_threshold': {'enabled': True, 'k': 1.5, 'min_samples': 5},
+    })
+
+    attacker = '10.0.0.150'
+
+    # Phase 1: 多轮少量端口访问（每轮 2 个端口），建立自适应基线
+    for base in range(6):
+        port1 = 10001 + base * 2
+        port2 = port1 + 1
+        for port in [port1, port2]:
+            pkt = _make_parsed(src_ip=attacker, dst_ip='192.168.1.1', dst_port=port)
+            detector.update(pkt)
+        detector.check_all()  # 触发 adaptive.observe()
+
+    # Phase 2: 突然访问大量新端口 → 动态阈值应远低于 50
+    for port in range(10100, 10130):  # 30 个新端口
+        pkt = _make_parsed(src_ip=attacker, dst_ip='192.168.1.1', dst_port=port)
+        detector.update(pkt)
+
+    alerts = detector.check_all()
+    ps = assert_alert_type(alerts, 'port_scan')
+    dt = ps['detail']['dynamic_threshold']
+    assert dt < 50, f"动态阈值应低于原始阈值 50: {dt}"
+    assert 10 < dt < 40, f"动态阈值应在合理范围: {dt}"
+    return {'测试项': '自适应阈值-端口扫描', '结果': 'PASS'}
+
+
+def test_adaptive_threshold_brute_force() -> dict:
+    """
+    验证自适应阈值对暴力破解的检测：
+    多轮正常登录建立基线 → 登录失败超过动态阈值 → 触发告警
+    """
+    detector = AnomalyDetector({
+        'brute_force': {'login_fail_threshold': 20},  # 固定阈值故意设高
+        'adaptive_threshold': {'enabled': True, 'k': 1.5, 'min_samples': 5},
+    })
+
+    attacker = '10.0.0.160'
+    ok_payload = b'Accepted password for user'
+
+    # Phase 1: 多轮正常登录（0 失败），建立基线
+    for _ in range(6):
+        pkt = _make_parsed(src_ip=attacker, dst_ip='192.168.1.1',
+                           dst_port=22, payload=ok_payload,
+                           payload_len=len(ok_payload))
+        detector.update(pkt)
+        detector.check_all()  # 触发 adaptive.observe(0)
+
+    # Phase 2: 登录失败
+    fail_payload = b'Failed password for root'
+    for _ in range(8):
+        pkt = _make_parsed(src_ip=attacker, dst_ip='192.168.1.1',
+                           dst_port=22, payload=fail_payload,
+                           payload_len=len(fail_payload))
+        detector.update(pkt)
+
+    alerts = detector.check_all()
+    bf = assert_alert_type(alerts, 'brute_force')
+    dt = bf['detail']['dynamic_threshold']
+    assert dt < 5, f"动态阈值应远低于原始阈值 20: {dt}"
+    return {'测试项': '自适应阈值-暴力破解', '结果': 'PASS'}
+
+
+def test_adaptive_threshold_statistics() -> dict:
+    """验证自适应阈值统计信息正确"""
+    detector = AnomalyDetector({
+        'adaptive_threshold': {'enabled': True, 'k': 2.0, 'min_samples': 3},
+    })
+
+    # 注入多个观察值
+    for val in [1, 2, 1, 2, 3]:
+        detector.adaptive.observe('test_metric', val)
+
+    stats = detector.get_adaptive_statistics()
+    assert 'test_metric' in stats, f"统计中应包含 test_metric: {stats}"
+    tm = stats['test_metric']
+    assert tm['mean'] == 1.8, f"均值应为 1.8: {tm['mean']}"
+    assert tm['samples'] == 5, f"样本数应为 5: {tm['samples']}"
+    # 动态阈值 = mean + k * std ≈ 1.8 + 2 * 0.837 = 3.474
+    assert 3.0 < tm['dynamic_threshold'] < 5.0, \
+        f"动态阈值在预期范围: {tm['dynamic_threshold']}"
+    return {'测试项': '自适应阈值-统计', '结果': 'PASS'}
+
+
+def test_adaptive_threshold_disabled() -> dict:
+    """禁用自适应阈值后，行为与固定阈值完全一致"""
+    detector = AnomalyDetector({
+        'port_scan': {'unique_ports_threshold': 50},
+        'adaptive_threshold': {'enabled': False},
+    })
+
+    attacker = '10.0.0.170'
+    for port in range(10001, 10050):  # 49 个端口（不足 50）
+        pkt = _make_parsed(src_ip=attacker, dst_ip='192.168.1.1', dst_port=port)
+        detector.update(pkt)
+
+    alerts_49 = detector.check_all()
+    assert_no_alert_type(alerts_49, 'port_scan')
+
+    # 再加 5 个端口 → 54 > 50, 应触发
+    for port in range(10050, 10055):
+        pkt = _make_parsed(src_ip=attacker, dst_ip='192.168.1.1', dst_port=port)
+        detector.update(pkt)
+
+    alerts_54 = detector.check_all()
+    assert_alert_type(alerts_54, 'port_scan')
+    return {'测试项': '自适应阈值-禁用', '结果': 'PASS'}
+
+
+# ============================================================
 # 测试运行器
 # ============================================================
 
@@ -340,6 +460,10 @@ ALL_TESTS = [
     test_baseline_deviation_detection,
     test_whitelist_bypass,
     test_baseline_learner_save_load,
+    test_adaptive_threshold_port_scan,
+    test_adaptive_threshold_brute_force,
+    test_adaptive_threshold_statistics,
+    test_adaptive_threshold_disabled,
 ]
 
 
