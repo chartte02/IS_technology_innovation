@@ -23,7 +23,7 @@ try:
         QGroupBox, QGridLayout, QHeaderView, QStatusBar, QMessageBox,
         QMenuBar, QAction, QFileDialog, QProgressBar, QCheckBox,
         QSpinBox, QFormLayout, QStackedWidget, QListWidget,
-        QListWidgetItem, QFrame, QSizePolicy,
+        QListWidgetItem, QFrame, QSizePolicy, QScrollArea,
     )
     from PyQt5.QtCore import (
         Qt, QTimer, pyqtSignal, QThread, QMargins, QSize,
@@ -42,7 +42,7 @@ except ImportError:
 try:
     from PyQt5.QtChart import (
         QChart, QChartView, QPieSeries, QBarSeries, QBarSet,
-        QLineSeries, QValueAxis, QBarCategoryAxis,
+        QHorizontalBarSeries, QLineSeries, QValueAxis, QBarCategoryAxis,
     )
     HAS_PYQTCHART = True
 except ImportError:
@@ -71,6 +71,7 @@ class IDSMainWindow(QMainWindow):
         self.engine = None
         self.demo_generator = None  # Demo 模式流量生成器
         self._current_theme = 'light'
+        self._last_gen_sent = 0     # Demo PPS tracking
 
         # Chart data buffers (for real-time line chart)
         self._pps_history = deque(maxlen=60)
@@ -124,7 +125,12 @@ class IDSMainWindow(QMainWindow):
         # 内容页 (QStackedWidget)
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentStack")
-        self.stack.addWidget(self._create_dashboard_tab())     # 0
+        # 仪表盘包裹在 QScrollArea 中
+        dash_scroll = QScrollArea()
+        dash_scroll.setWidgetResizable(True)
+        dash_scroll.setWidget(self._create_dashboard_tab())
+        dash_scroll.setObjectName("dashScroll")
+        self.stack.addWidget(dash_scroll)                       # 0
         self.stack.addWidget(self._create_alert_tab())          # 1
         self.stack.addWidget(self._create_statistics_tab())     # 2
         self.stack.addWidget(self._create_signature_tab())      # 3
@@ -195,13 +201,13 @@ class IDSMainWindow(QMainWindow):
 
     def _on_sidebar_changed(self, row: int):
         """侧边栏点击处理: 导航或主题切换"""
-        if row == 7:  # Theme toggle (after 6 items + 1 separator)
+        total_pages = self.stack.count()  # dynamic: works with 5 or 6 tabs
+        if row == total_pages + 1:  # Theme toggle (after N items + 1 separator)
             self._on_toggle_theme()
-            # 恢复选中到当前内容页
             self.sidebar.blockSignals(True)
             self.sidebar.setCurrentRow(self.stack.currentIndex())
             self.sidebar.blockSignals(False)
-        elif 0 <= row <= 5:
+        elif 0 <= row < total_pages:
             self.stack.setCurrentIndex(row)
 
     # ─── Apple 主题系统 ───
@@ -415,8 +421,7 @@ class IDSMainWindow(QMainWindow):
 
             self._pps_chart_view = QChartView(self._pps_chart)
             self._pps_chart_view.setRenderHint(QPainter.Antialiasing)
-            self._pps_chart_view.setMinimumHeight(200)
-            self._pps_chart_view.setMaximumHeight(280)
+            self._pps_chart_view.setFixedHeight(240)
             traffic_layout.addWidget(self._pps_chart_view)
         else:
             self._pps_chart_view = None
@@ -543,6 +548,9 @@ class IDSMainWindow(QMainWindow):
             self._pie_chart.addSeries(self._pie_severity)
             self._pie_chart.setAnimationOptions(QChart.SeriesAnimations)
             self._pie_chart.legend().setAlignment(Qt.AlignRight)
+            self._pie_chart.legend().setLabelColor(
+                QColor(LIGHT_THEME['text'] if self._current_theme == 'light'
+                       else DARK_THEME['text']))
             self._pie_chart.setBackgroundBrush(Qt.transparent)
             self._pie_chart_view = QChartView(self._pie_chart)
             self._pie_chart_view.setRenderHint(QPainter.Antialiasing)
@@ -552,34 +560,35 @@ class IDSMainWindow(QMainWindow):
         else:
             self._pie_chart_view = None
 
-        # 柱状图卡片
+        # 柱状图卡片 (横向)
         if HAS_PYQTCHART:
             bar_card = QFrame()
             bar_card.setObjectName("contentCard")
             bar_layout = QVBoxLayout(bar_card)
-            bar_label = QLabel("Attack Category Distribution")
+            bar_label = QLabel("Attack Categories")
             bar_label.setObjectName("sectionTitle")
             bar_layout.addWidget(bar_label)
 
-            self._bar_set = QBarSet("Count")
+            self._bar_set = QBarSet("")
             self._bar_set.setColor(QColor(255, 149, 0))
-            self._bar_series = QBarSeries()
+            self._bar_series = QHorizontalBarSeries()
             self._bar_series.append(self._bar_set)
             self._bar_chart = QChart()
             self._bar_chart.addSeries(self._bar_series)
             self._bar_chart.setAnimationOptions(QChart.SeriesAnimations)
             self._bar_chart.legend().hide()
             self._bar_chart.setBackgroundBrush(Qt.transparent)
-            self._bar_axis_x = QBarCategoryAxis()
-            self._bar_axis_y = QValueAxis()
-            self._bar_axis_y.setTitleText("Count")
-            self._bar_chart.addAxis(self._bar_axis_x, Qt.AlignBottom)
-            self._bar_chart.addAxis(self._bar_axis_y, Qt.AlignLeft)
-            self._bar_series.attachAxis(self._bar_axis_x)
-            self._bar_series.attachAxis(self._bar_axis_y)
+            self._bar_chart.setMargins(QMargins(0, 0, 0, 0))
+            self._bar_axis_val = QValueAxis()
+            self._bar_axis_val.setLabelFormat("%d")
+            self._bar_axis_cat = QBarCategoryAxis()
+            self._bar_chart.addAxis(self._bar_axis_cat, Qt.AlignLeft)
+            self._bar_chart.addAxis(self._bar_axis_val, Qt.AlignBottom)
+            self._bar_series.attachAxis(self._bar_axis_val)
+            self._bar_series.attachAxis(self._bar_axis_cat)
             self._bar_chart_view = QChartView(self._bar_chart)
             self._bar_chart_view.setRenderHint(QPainter.Antialiasing)
-            self._bar_chart_view.setMinimumSize(280, 250)
+            self._bar_chart_view.setFixedSize(400, 240)
             bar_layout.addWidget(self._bar_chart_view)
             charts_row.addWidget(bar_card)
         else:
@@ -595,9 +604,10 @@ class IDSMainWindow(QMainWindow):
         top_title.setObjectName("sectionTitle")
         top_layout.addWidget(top_title)
 
-        self.text_top_src = QTextEdit()
-        self.text_top_src.setReadOnly(True)
-        top_layout.addWidget(self.text_top_src, 1)  # stretch to fill
+        self.list_top_src = QListWidget()
+        self.list_top_src.setObjectName("topSrcList")
+        self.list_top_src.setMaximumHeight(200)
+        top_layout.addWidget(self.list_top_src)
 
         self.btn_refresh_stats = QPushButton("Refresh Statistics")
         self.btn_refresh_stats.clicked.connect(self._refresh_statistics)
@@ -1325,26 +1335,34 @@ class IDSMainWindow(QMainWindow):
         try:
             status = self.engine.get_status()
 
-            # 更新仪表盘卡片
-            stats = self.engine.alert_mgr.get_realtime_stats()
+            # 更新仪表盘卡片 — 用累计统计(by_severity)而非仅最近60秒
             all_stats = self.engine.alert_mgr.get_statistics()
+            sev = all_stats.get('by_severity', {})
             self._set_card_value(self.card_total_alerts,
                 str(all_stats['total']))
             self._set_card_value(self.card_critical,
-                str(stats.get('critical', 0)))
+                str(sev.get('critical', 0)))
             self._set_card_value(self.card_high,
-                str(stats.get('high', 0)))
+                str(sev.get('high', 0)))
             self._set_card_value(self.card_medium,
-                str(stats.get('medium', 0)))
+                str(sev.get('medium', 0)))
             self._set_card_value(self.card_low,
-                str(stats.get('low', 0)))
+                str(sev.get('low', 0)))
             self._set_card_value(self.card_total_packets,
                 str(status.get('packets_captured', 0)))
 
-            # 更新流量统计 (Fix #2: 连接真实数据源)
-            current_pps = status.get('pps', 0)
-            current_bps = (status.get('bytes_captured', 0) /
-                          max(status.get('elapsed_seconds', 1), 1))
+            # 更新流量统计 (Demo 模式下用生成器 PPS, 否则用抓包器 PPS)
+            gen = self.demo_generator
+            if gen is not None and gen._running:
+                gs = gen.get_stats()
+                now_sent = gs["sent"]
+                current_pps = now_sent - self._last_gen_sent  # delta ~ PPS
+                self._last_gen_sent = now_sent
+                current_bps = current_pps * 512  # assume ~512 bytes/pkt
+            else:
+                current_pps = status.get('pps', 0)
+                current_bps = (status.get('bytes_captured', 0) /
+                              max(status.get('elapsed_seconds', 1), 1))
             self.lbl_pps.setText("PPS: {0:.0f}".format(current_pps))
             self.lbl_bps.setText("BPS: {0:.0f}".format(current_bps))
 
@@ -1371,11 +1389,9 @@ class IDSMainWindow(QMainWindow):
                 self.lbl_ano.setText("Anomaly: 0")
 
             # Demo 模式生成器状态
-            gen = self.demo_generator
             if gen is not None and gen._running:
-                gs = gen.get_stats()
                 self.lbl_gen.setText(
-                    "Demo: {0}pkt".format(gs["sent"]))
+                    "Demo: {0}pkt".format(gen.get_stats()["sent"]))
             else:
                 self.lbl_gen.setText("Demo: OFF")
 
@@ -1464,6 +1480,16 @@ class IDSMainWindow(QMainWindow):
 
         stats = self.engine.alert_mgr.get_statistics()
 
+        # 饼图/柱状图 图例颜色适配当前主题
+        if HAS_PYQTCHART:
+            txt_color = QColor(LIGHT_THEME['text'] if self._current_theme == 'light'
+                               else DARK_THEME['text'])
+            if hasattr(self, '_pie_chart'):
+                self._pie_chart.legend().setLabelColor(txt_color)
+            if hasattr(self, '_pps_chart'):
+                self._pps_chart.legend().setLabelColor(txt_color)
+                self._pps_chart.setTitleBrush(txt_color)
+
         # 严重度饼图
         if HAS_PYQTCHART and hasattr(self, '_pie_severity'):
             self._pie_severity.clear()
@@ -1487,25 +1513,25 @@ class IDSMainWindow(QMainWindow):
                     sl = self._pie_severity.append(sev, count)
                     sl.setColor(QColor(0x9E, 0x9E, 0x9E))
 
-        # 类别柱状图
+        # 类别柱状图 (横向)
         if HAS_PYQTCHART and hasattr(self, '_bar_set'):
             cats = sorted(stats.get('by_category', {}).items(),
-                          key=lambda x: x[1], reverse=True)
+                          key=lambda x: x[1], reverse=True)[:8]
             self._bar_set.remove(0, self._bar_set.count())
-            categories = []
-            for cat, count in cats[:8]:
+            cat_labels = []
+            for cat, count in cats:
                 self._bar_set.append(count)
-                categories.append(cat)
-            self._bar_axis_x.clear()
-            self._bar_axis_x.append(categories)
-            max_val = max([c for _, c in cats[:8]], default=1)
-            self._bar_axis_y.setRange(0, max_val * 1.2)
+                cat_labels.append(str(cat))
+            self._bar_axis_cat.clear()
+            self._bar_axis_cat.append(cat_labels)
+            max_val = max([c for _, c in cats], default=1)
+            self._bar_axis_val.setRange(0, max_val * 1.3)
 
         # TOP 攻击源 IP
-        lines = []
+        self.list_top_src.clear()
         for ip, count in stats.get('top_attack_sources', [])[:10]:
-            lines.append("  {0}: {1} attacks".format(ip, count))
-        self.text_top_src.setText('\n'.join(lines) if lines else "  No data")
+            self.list_top_src.addItem(
+                "  {0}  —  {1} attacks".format(ip, count))
 
     def _populate_interfaces(self):
         """填充网络接口列表"""

@@ -286,7 +286,7 @@ python main.py
 
 ## 四、完整演示流程
 
-### 4.1 推荐演示顺序（共 8-10 分钟）
+### 4.1 推荐演示顺序（共 8 幕，约 10-12 分钟）
 
 ```
 第1幕: 启动展示 (30秒)
@@ -313,17 +313,24 @@ python main.py
   切换: Attack Chain Tab (Tab 4) → 展示攻击链可视化
   讲解: 攻击链颜色含义 + 3步攻击路径
 
-第5幕: 特征库展示 (30秒)
+第5幕: **真实网络扫描检测** ⭐ (90秒)
+  操作: 回放 kali_to_windows_scan.pcap → 展示真实 Kali→Windows 扫描检出
+  效果: 误用检测(Nmap指纹) + 异常检测(端口扫描) 双引擎同时告警
+  讲解: "这是真实虚拟机环境抓包，298个包"
+  切换: Alert Tab → 筛选 anomaly → 展示异常检测告警
+  切换: Attack Chain Tab → 展示扫描攻击链
+
+第6幕: 特征库展示 (30秒)
   切换: Signatures Tab (Tab 3)
   讲解: 93条规则 / 10个YAML / Suricata导入
 
-第6幕: Demo 模式 (30秒)
+第7幕: Demo 模式 (30秒)
   操作: 点击 [▶ Demo] → 系统自动生成混合攻击流量
   效果: 仪表盘实时刷新、告警持续产生
   操作: 点击 [■ Stop Demo] 停止
   讲解: "Demo模式模拟真实攻击场景，无需PCAP文件"
 
-第7幕: 主题切换 + 总结 (30秒)
+第8幕: 主题切换 + 总结 (30秒)
   操作: 点击侧边栏 Toggle Theme → 切换到暗色主题
   讲解: "支持亮色/暗色双主题，适配不同工作环境"
 ```
@@ -392,7 +399,56 @@ python main.py
    - 底部 "Level: HIGH (3 phases)"
 ```
 
-#### 第 5 步 — Demo 模式（如需额外展示）
+#### 第 5 步 ⭐ — 真实网络扫描检测（答辩亮点）
+
+这是整个演示的亮点环节——展示系统对**真实网络环境流量**（非人工构造）的检测能力。
+
+**PCAP 来源**:
+```
+VirtualBox Host-Only 网络真实抓包:
+┌──────────────────┐    扫描    ┌──────────────────┐
+│  Kali Linux      │ ────────→ │  Windows 10      │
+│  192.168.71.128  │  298 个包  │  192.168.71.1    │
+│  (攻击机)        │  58 秒     │  (靶机)          │
+└──────────────────┘           └──────────────────┘
+         ↑  NADS 在此宿主机上离线分析 PCAP
+
+Kali 使用 Nmap 对 Windows 进行了端口扫描，
+覆盖了 45+ 个不同端口 (SSH/HTTP/HTTPS/MySQL/RDP/...)
+```
+
+**操作**:
+```
+1. 点击控制栏 [📂 Replay PCAP]
+2. 选择 kali_to_windows_scan.pcap → 点击打开
+3. 等待约 5 秒（298 个包回放）→ 观察效果:
+   a. Dashboard: Total Alerts 数字跳动
+   b. Log 区滚动显示:
+      "[MED] [anomaly] port_scan: 43 个不同端口 (阈值: 20)"
+      "[MED] [misuse] SCAN-001: Port Scan - Nmap SYN Scan"
+   c. Alerts 表格新增 3 条告警
+4. 切换到 "⚠ Alerts" 页
+5. 观察两条关键告警:
+   - 异常检测: "port_scan: 43 个不同端口" (source=anomaly, 统计偏离触发)
+   - 误用检测: "Port Scan - Nmap SYN Scan" (source=misuse, 特征匹配识破Nmap)
+6. 指向两条告警的 Source 列 → 一个来自 "anomaly"，一个来自 "misuse"
+7. 切换到 "◈ Attack Chain" 页 → 点击 Refresh
+8. 观察攻击链图: Kali扫描 → 跨多个端口 → 侦察阶段
+
+关键数据:
+  总包数:     298 个
+  回放时长:   58 秒（按原始间隔）
+  误用检测:   2 条 (Nmap扫描指纹 + PHP误报)
+  异常检测:   1 条 (端口扫描: 43端口)
+  去重后:     3 条
+```
+
+**讲解词**:
+> "接下来展示系统对真实网络流量的检测能力。这个 PCAP 不是我们手动构造的——它来自 VirtualBox 虚拟机环境的真实抓包：一台 Kali Linux 使用 Nmap 对 Windows 目标进行了端口扫描，共发起了 298 个探测包，涉及 45 个以上不同端口。
+>
+>回放后可以看到，我们的双引擎同时产生了告警——误用检测引擎识别出了 Nmap SYN 扫描的指纹特征，异常检测引擎通过统计偏离发现了单 IP 访问大量端口的异常行为。两条告警来自不同的检测维度，互相印证，这正是混合检测架构的优势所在。"
+
+#### 第 6 步 — Demo 模式（如需额外展示）
 
 ```
 1. 点击控制栏 [▶ Demo] 按钮
@@ -409,6 +465,7 @@ python main.py
 | GUI 打开时 | "Apple 风格设计，6 个功能页面，侧边栏导航" |
 | 回放 PCAP 后 | "检测到了 X 条告警，包括 critical 级 SQL 注入和 high 级 XSS" |
 | 双击告警弹窗时 | "每条告警不仅显示攻击载荷原文，还自动查询威胁情报——这个 IP 在 AbuseIPDB 得分 85/100，已知恶意" |
+| 真实扫描演示时 ⭐ | "这不是手动构造的流量——来自 VirtualBox 虚拟机真实抓包。误用检测识破了 Nmap 指纹，异常检测通过统计偏离发现了端口扫描。双引擎互相印证——混合检测的核心优势" |
 | Statistics 页 | "饼图展示严重度分布，柱状图展示攻击类别排名" |
 | Attack Chain 页 | "这是我们的特色——将零散告警串联成攻击者行动地图" |
 | Signatures 页 | "93 条规则，包括自研的 WebShell 检测和从 Suricata 社区导入的规则" |
@@ -425,14 +482,15 @@ python main.py
 
 **PCAP 文件清单**:
 
-| 文件名 | 攻击类型 | 包数 | 预期告警 |
-|--------|----------|:--:|:--:|
-| `demo_sqli.pcap` | SQL 注入 | 3 | 5 条 (critical+high) |
-| `demo_xss.pcap` | XSS 跨站脚本 | 3 | 6 条 (high+medium) |
-| `demo_webattack.pcap` | 目录遍历+命令注入+文件包含 | 4 | 7 条 (high+critical) |
-| `demo_mixed.pcap` | 扫描+SQL注入+后门 | 5 | 6 条 (含攻击链) |
-| `synthetic_attacks.pcap` | 综合攻击 | 16 | 24 条 |
-| `extended_attacks.pcap` | 扩展攻击(SSRF/XXE/SSTI/WebShell) | 12 | 15 条 |
+| 文件名 | 攻击类型 | 包数 | 预期告警 | 来源 |
+|--------|----------|:--:|:--:|------|
+| `demo_sqli.pcap` | SQL 注入 | 3 | 5 条 (critical+high) | Scapy 构造 |
+| `demo_xss.pcap` | XSS 跨站脚本 | 3 | 6 条 (high+medium) | Scapy 构造 |
+| `demo_webattack.pcap` | 目录遍历+命令注入+文件包含 | 4 | 7 条 (high+critical) | Scapy 构造 |
+| `demo_mixed.pcap` | 扫描+SQL注入+后门 | 5 | 6 条 (含攻击链) | Scapy 构造 |
+| `synthetic_attacks.pcap` | 综合攻击 | 16 | 24 条 | Scapy 构造 |
+| `extended_attacks.pcap` | 扩展攻击(SSRF/XXE/SSTI/WebShell) | 12 | 15 条 | Scapy 构造 |
+| **`kali_to_windows_scan.pcap`** | **真实 Kali→Windows 端口扫描** | **298** | **3 条 (1异常+2误用)** | **虚拟机真实抓包** |
 
 ### 5.2 方案B：命令行模式（GUI 故障时备用）
 

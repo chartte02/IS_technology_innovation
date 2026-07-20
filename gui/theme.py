@@ -137,9 +137,29 @@ def build_stylesheet(c: dict) -> str:
         background-color: {c['sidebarHover']};
     }}
 
+    /* Statistics TOP IP list */
+    QListWidget#topSrcList {{
+        background-color: transparent;
+        border: none;
+        font-size: {FONT_BASE};
+        color: {c['text']};
+    }}
+    QListWidget#topSrcList::item {{
+        padding: 4px 8px;
+    }}
+    QListWidget#topSrcList::item:alternate {{
+        background-color: {c['alternateBase']};
+    }}
+
     /* ===== 内容区 ===== */
     QStackedWidget#contentStack {{
         background-color: {c['window']};
+    }}
+
+    /* Dashboard scroll area */
+    QScrollArea#dashScroll {{
+        background-color: transparent;
+        border: none;
     }}
 
     /* ===== 统计卡片 ===== */
