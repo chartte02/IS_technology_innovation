@@ -110,9 +110,38 @@ cd D:\Document\CODE\School\IS_technology_innovation
 | 功能 | 描述 | 如何验证 |
 |------|------|----------|
 | **亮/暗主题切换** | 侧边栏底部 "☀ Toggle Theme" | 点击 → 全局切换暗色；再点 → 切回亮色 |
+| **▶ Demo 动态检测** | 控制栏 Demo 按钮, 启动随机攻击流量生成器, 实时检测 | 点 Demo → 仪表盘卡片/图表实时跳动, 告警持续冒出来, 状态栏 PPS > 0；再点停止 |
+| **📂 Replay PCAP** | 回放预录 PCAP 文件 | 选文件 → 终端输出告警, 仪表盘更新 |
 | **菜单 > File > Export Alerts** | 导出全部告警 | 选路径保存，检查 JSON |
 | **菜单 > Settings > View Config** | 查看 config.yaml 内容 | 弹窗显示配置文件 |
 | **菜单 > Help > About NADS** | 关于对话框 | 显示项目名称和版本 |
+
+### Demo 模式说明
+
+Demo 模式是**最直观的动态演示方式**——不需要管理员权限，不需要真实攻击环境，不需要 PCAP 文件。点击按钮后：
+
+1. 后台线程每秒发 2 个包（攻击 60% + 正常 40%）
+2. 攻击包随机从 **SQLi / XSS / Web Attack / BruteForce / Backdoor / 端口扫描** 池中选取
+3. 误用检测 + 异常检测同时工作，告警实时出现在告警列表和仪表盘
+4. 异常检测器的 `check_all()` 每 5 秒自动触发，端口扫描等异常告警由 `source=anomaly` 标识
+5. 流量面板新增 **Anomaly 计数** 和 **Demo 包数** 标签
+
+```
+Demo 运行后的数据流:
+  TrafficGenerator (后台线程)
+    ↓ _on_packet() 每个包
+  ProtocolParser → MisuseDetector → [误用告警]
+                 → AnomalyDetector → [异常告警, 每5秒]
+                 → TCPReassembler → [流重组统计]
+    ↓
+  AlertManager → GUI 实时刷新
+```
+
+**验证检查点：**
+- [ ] 点 Demo → 状态栏 PPS 从 0 变为非 0, 告警数开始增长
+- [ ] 告警列表每 5 秒自动刷新, 能看到 xss/web_attack/sql_injection 等类别
+- [ ] 筛选 `source=anomaly` 可看到异常检测告警（如果有端口扫描等高阈值操作触发）
+- [ ] Demo 标签显示已发包数, 再点停止 → PPS 归零, 告警保持
 
 ---
 
@@ -148,20 +177,27 @@ tests/test_pcaps/http.cap                # HTTP 正常流量（256KB，验证无
    .\venv\Scripts\python.exe main.py
    验证：窗口正常打开，侧边栏 5 项 + Toggle Theme
 
-第 2 步：回放第一个 PCAP
-   左侧点 Dashboard → 点顶部 📂 Replay PCAP → 选 synthetic_attacks.pcap
-   验证：终端输出 21 条告警，仪表盘卡片数字跳动，图表更新
+第 2 步：Demo 动态检测（★ 最直观）
+   点控制栏 ▶ Demo → 仪表盘卡片数字实时跳动
+   → 实时 PPS 折线图波动 → 告警列表逐渐填满
+   → 运行 30 秒后点 ■ Stop Demo
+   验证：>30 条告警，覆盖 SQLi/XSS/Web/BruteForce/Backdoor 多类
 
 第 3 步：查看告警列表
-   左侧点 Alerts → 等 5 秒自动刷新 → 表格显示 21 条告警
-   筛选 severity=critical → 点 Filter → 仅显示 4 条严重告警
+   左侧点 Alerts → 等 5 秒自动刷新 → 表格显示告警
+   筛选 severity=critical → 点 Filter → 仅显示严重告警
+   筛选 category=xss → 确认 XSS 类型存在
    点 Export JSON → 导出筛选结果
 
 第 4 步：查看统计分析
    左侧点 Statistics → 饼图显示严重度分布 → 柱状图显示类别分布
-   验证：sql_injection/xss/web_attack 类别有数据
+   验证：sql_injection/xss/web_attack 类别有柱体
 
-第 5 步：切暗色主题展示
+第 5 步：PCAP 回放（备用演示）
+   点 📂 Replay PCAP → 选 synthetic_attacks.pcap
+   验证：21 条告警，覆盖 4 大类
+
+第 6 步（可选）：切暗色主题展示
    左侧底部 "☀ Toggle Theme" → 全局变暗 → 再点切回亮色
 ```
 
@@ -169,14 +205,15 @@ tests/test_pcaps/http.cap                # HTTP 正常流量（256KB，验证无
 
 ## 六、模块接入状态
 
-| 模块 | 负责人 | GUI 接入 | 验证状态 |
-|------|:---:|:---:|:---:|
-| 误用检测引擎 | A | ✅ 已接入 | 93 条规则，PCAP 回放验证通过 |
-| 数据包捕获 | B | ✅ 已接入 | 47 网卡，status 字段正确 |
-| 协议解析 | B | ✅ 已接入 | 16 字段契约 100% 对齐 |
-| TCP 流重组 | B | ✅ 已接入 | 统计数据显示在仪表盘 |
-| TLS 加密检测 | B | ✅ 已接入 | cryptography 已安装，检测器激活 |
-| 异常检测 | C | ✅ 已接入 | 主机数/告警通过 AlertManager 汇入 |
-| 基线学习 | C | ⚠️ 未直接展示 | 基线数据需长时间学习，暂无 GUI 面板 |
-| 告警管理 | D | ✅ 已接入 | 提交/去重/筛选/导出/统计 |
-| GUI 界面 | D | ✅ 已完成 | Apple 风格，5 页面 + 亮/暗双主题 |
+| 模块 | 负责人 | GUI 接入 | 展示方式 |
+|------|:---:|:---:|------|
+| 误用检测引擎 | A | ✅ | PCAP 回放 / Demo → 告警列表, 按类别筛选 |
+| 数据包捕获 | B | ✅ | 在线抓包 → 状态栏 PPS/BPS |
+| 协议解析 | B | ✅ | 透传, 输出 parsed_packet |
+| TCP 流重组 | B | ✅ | 仪表盘 Conn/TCP 计数 |
+| TLS 加密检测 | B | ✅ | 告警中 source=tls, 分类显示 |
+| **异常检测** | **C** | **✅** | **Demo 模式端口扫描 → source=anomaly 告警; 仪表盘 Hosts/Anomaly 标签** |
+| **基线学习** | **C** | **✅** | **点 Learn Baseline → 日志提示** |
+| **流量生成器** | **D** | **✅** | **点 Demo → 实时动态攻击流量** |
+| 告警管理 | D | ✅ | 去重/筛选/导出/统计 |
+| GUI 界面 | D | ✅ | Apple 风格 5 页面 + 亮/暗主题 |
