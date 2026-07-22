@@ -306,6 +306,10 @@ class IDSMainWindow(QMainWindow):
         self.btn_demo.setObjectName("ctrlBtn")
         self.btn_demo.clicked.connect(self._on_demo)
         layout.addWidget(self.btn_demo)
+        self.btn_reset = QPushButton("Reset")
+        self.btn_reset.setObjectName("ctrlBtn")
+        self.btn_reset.clicked.connect(self._on_reset_session)
+        layout.addWidget(self.btn_reset)
 
         layout.addStretch()
 
@@ -1062,6 +1066,86 @@ class IDSMainWindow(QMainWindow):
         self.demo_generator.start(pps=2.0)
         self.btn_demo.setText("■  Stop Demo")
         self._log("Demo started: 2 pps attack+normal mixed traffic")
+
+    def _on_reset_session(self):
+        """Clear current GUI/session counters without reloading configuration."""
+        if self.engine is None:
+            return
+
+        capture = getattr(self.engine, 'capture', None)
+        if capture is not None and capture.is_running:
+            QMessageBox.information(
+                self, "Reset Session",
+                "Stop the current capture or replay before resetting."
+            )
+            return
+
+        demo = getattr(self, 'demo_generator', None)
+        if demo is not None and getattr(demo, 'is_running', False):
+            QMessageBox.information(
+                self, "Reset Session",
+                "Stop Demo before resetting."
+            )
+            return
+
+        self.engine.alert_mgr.clear_all()
+
+        if capture is not None:
+            capture.packets_captured = 0
+            capture.bytes_captured = 0
+            capture.start_time = 0.0
+            capture._last_stats_time = time.time()
+            capture._pps_counter = 0
+            capture._current_pps = 0.0
+            capture.recent_packets.clear()
+            capture.recent_alerts.clear()
+
+        reassembler = getattr(self.engine, 'reassembler', None)
+        if reassembler is not None:
+            with reassembler._lock:
+                reassembler._streams.clear()
+                reassembler.total_streams_created = 0
+                reassembler.total_streams_expired = 0
+                reassembler.total_bytes_reassembled = 0
+
+        anomaly = getattr(self.engine, 'anomaly_detector', None)
+        if anomaly is not None:
+            with anomaly._lock:
+                anomaly._stats.clear()
+                if hasattr(anomaly, '_beacon_flows'):
+                    anomaly._beacon_flows.clear()
+                anomaly.total_processed = 0
+                anomaly.total_alerts = 0
+                anomaly.window_start = time.time()
+            if hasattr(self.engine, '_last_anomaly_check'):
+                self.engine._last_anomaly_check = 0.0
+
+        self._pps_history.clear()
+        self._bps_history.clear()
+        self._chart_time_counter = 0
+        self._update_realtime_chart()
+        self._refresh_statistics()
+
+        self.table_recent.setRowCount(0)
+        self.table_alerts.setRowCount(0)
+        self.text_top_ip.setText("  No data")
+        if hasattr(self, 'text_top_src'):
+            self.text_top_src.setText("  No data")
+
+        for card in [self.card_total_alerts, self.card_critical,
+                     self.card_high, self.card_medium, self.card_low,
+                     self.card_total_packets]:
+            self._set_card_value(card, "0")
+
+        self.lbl_pps.setText("PPS: 0")
+        self.lbl_bps.setText("BPS: 0")
+        self.lbl_conn.setText("Conn: 0")
+        self.lbl_hosts.setText("Hosts: 0")
+        self.lbl_streams.setText("TCP: 0")
+        self.pps_label.setText("PPS: 0")
+        self.alerts_label.setText("Alerts: 0")
+        self.uptime_label.setText("Uptime: 00:00:00")
+        self._log("Session statistics reset")
 
     def _on_export_alerts(self):
         """导出全部告警 (菜单)"""
