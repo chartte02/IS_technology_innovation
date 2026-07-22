@@ -144,8 +144,8 @@ class AlertFilter:
         original_severity = alert.get('severity', 'low')
         alert_type = alert.get('type', '')
 
-        # ── 第1层：白名单过滤 ──
-        if self._is_whitelisted(src_ip) or self._is_whitelisted(dst_ip):
+        # ── 第1层：白名单过滤（仅过滤源 IP，不因目标 IP 在白名单中而忽略攻击）──
+        if self._is_whitelisted(src_ip):
             self.stats.dropped_whitelist += 1
             logger.debug(f"白名单丢弃: {src_ip} → {dst_ip} ({alert_type})")
             return None

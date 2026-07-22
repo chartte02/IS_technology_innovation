@@ -245,7 +245,6 @@ class PacketCapture:
 
         stats = {
             'total': total,
-            'alerts': len(self.recent_alerts),
             'duration': duration,
             'pps': total / duration if duration > 0 else 0,
         }
