@@ -122,7 +122,7 @@ class IDSEngine:
         # 6.5 告警降噪过滤器（PDF必做：误报自动降噪）
         assets_cfg = self.config.get('assets', {})
         self.alert_filter = None
-        if assets_cfg:
+        if assets_cfg and assets_cfg.get('enabled', True):
             from core.alert_filter import AlertFilter
             self.alert_filter = AlertFilter(
                 assets_config=assets_cfg,
@@ -138,6 +138,18 @@ class IDSEngine:
             from core.attack_chain import AttackChainAnalyzer
             self.attack_chain_analyzer = AttackChainAnalyzer(ac_cfg)
             logger.info("[✓] 攻击链关联分析器")
+
+        # 6.7 ML 异常检测器（PDF必做：ML识别未知攻击）
+        ml_cfg = self.config.get('ml_anomaly', {})
+        self.ml_detector = None
+        self._ml_trained = False
+        if ml_cfg.get('enabled', True):
+            try:
+                from core.ml_anomaly import MLAnomalyDetector
+                self.ml_detector = MLAnomalyDetector(config=ml_cfg)
+                logger.info("[✓] ML 异常检测器 (Isolation Forest)")
+            except ImportError:
+                logger.info("[✗] ML 检测器跳过 (sklearn 未安装)")
 
         # 7. 数据包捕获器
         capture_cfg = self.config.get('capture', {})
@@ -241,6 +253,31 @@ class IDSEngine:
                                 'detail': {'ja3': result.get('ja3', ''),
                                            'sni': result.get('sni', '')},
                             }, source='tls')
+                    # JA3 恶意指纹查询
+                    ja3 = result.get('ja3', '')
+                    if ja3:
+                        info = self.tls_detector.lookup_ja3(ja3)
+                        if info:
+                            self.alert_mgr.submit({
+                                'signature_id': 'TLS-JA3-MALICIOUS',
+                                'signature_name':
+                                    f"TLS Malicious JA3: {info.get('family', 'Unknown')}",
+                                'type': 'tls_anomaly',
+                                'category': 'backdoor',
+                                'severity': 'critical',
+                                'description':
+                                    f"TLS fingerprint matches known malware: "
+                                    f"{info.get('family', 'Unknown')} "
+                                    f"(confidence: {info.get('confidence', 'unknown')})",
+                                'src_ip': parsed.get('src_ip', ''),
+                                'dst_ip': parsed.get('dst_ip', ''),
+                                'src_port': parsed.get('src_port', 0),
+                                'dst_port': parsed.get('dst_port', 0),
+                                'timestamp': parsed.get('timestamp', time.time()),
+                                'detail': {'ja3': ja3,
+                                           'family': info.get('family', ''),
+                                           'source': info.get('source', '')},
+                            }, source='tls')
             except Exception:
                 pass  # 非 ClientHello 消息则跳过
         self._perf_stats['tls']['total'] += time.perf_counter() - t0
@@ -277,21 +314,53 @@ class IDSEngine:
             if misuse_alerts:
                 self.alert_mgr.submit_batch(misuse_alerts, source='misuse')
 
-        # Step 8: 定期检查异常（每 5 秒）
+        # Step 8: 定期检查异常 + ML + 攻击链（每 5 秒）
         now = time.time()
         if not hasattr(self, '_last_anomaly_check'):
             self._last_anomaly_check = 0.0
         if now - self._last_anomaly_check >= 5.0:
             self._last_anomaly_check = now
+
+            # 8a: 异常检测
             anomaly_alerts = self.anomaly_detector.check_all()
             if anomaly_alerts:
                 if self.alert_filter:
                     anomaly_alerts = self.alert_filter.process_batch(anomaly_alerts)
                 if anomaly_alerts:
                     submitted = self.alert_mgr.submit_batch(anomaly_alerts, source='anomaly')
-                    # 攻击链关联
                     if self.attack_chain_analyzer and submitted:
                         self.attack_chain_analyzer.feed_batch(submitted)
+
+            # 8b: ML 异常检测 (Isolation Forest)
+            if self.ml_detector:
+                try:
+                    # 积累数据后自动训练
+                    ad_stats = self.anomaly_detector.get_statistics()
+                    if ad_stats.get('total_hosts_tracked', 0) >= 10 and not self._ml_trained:
+                        self.ml_detector.collect_features(self.anomaly_detector)
+                        if self.ml_detector.is_ready():
+                            self.ml_detector.start_training()
+                            self._ml_trained = True
+                            logger.info("[ML] 模型训练完成")
+
+                    # 定期预测
+                    if self._ml_trained and self.ml_detector.is_ready():
+                        ml_alerts = self.ml_detector.predict_all(
+                            self.anomaly_detector)
+                        if ml_alerts:
+                            self.alert_mgr.submit_batch(ml_alerts, source='ml')
+                except Exception as e:
+                    logger.debug(f"[ML] 检测跳过: {e}")
+
+            # 8c: 攻击链关联 (告警已通过 feed_batch 累积)
+            if self.attack_chain_analyzer:
+                try:
+                    chain_results = self.attack_chain_analyzer.get_chains()
+                    if chain_results and chain_results.get('chains'):
+                        # 攻击链已形成，保存到引擎属性供 GUI 读取
+                        self._attack_chains = chain_results
+                except Exception:
+                    pass
 
     # ─── 控制接口 ───
 
@@ -310,8 +379,30 @@ class IDSEngine:
         logger.info("IDS 已停止")
 
     def replay_pcap(self, pcap_path: str):
-        """回放 PCAP 文件"""
-        return self.capture.replay_pcap(pcap_path)
+        """回放 PCAP 文件（含最终异常检测 + 攻击链刷新）"""
+        result = self.capture.replay_pcap(pcap_path)
+
+        # 回放完成后强制一次异常检测（短 PCAP 可能不够 5 秒触发定时检查）
+        anomaly_alerts = self.anomaly_detector.check_all()
+        if anomaly_alerts:
+            if self.alert_filter:
+                anomaly_alerts = self.alert_filter.process_batch(anomaly_alerts)
+            if anomaly_alerts:
+                self.alert_mgr.submit_batch(anomaly_alerts, source='anomaly')
+                if self.attack_chain_analyzer:
+                    for a in anomaly_alerts:
+                        self.attack_chain_analyzer.feed(a)
+
+        # 刷新攻击链
+        if self.attack_chain_analyzer:
+            try:
+                chain_results = self.attack_chain_analyzer.get_chains()
+                if chain_results and chain_results.get('chains'):
+                    self._attack_chains = chain_results
+            except Exception:
+                pass
+
+        return result
 
     def get_status(self) -> dict:
         """获取引擎整体状态（含性能监控）"""

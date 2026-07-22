@@ -1,0 +1,16 @@
+
+=== MLAnomalyDetector ===
+Public methods: ['collect_features', 'compare_with_threshold', 'decision_score', 'extract_features', 'get_feature_summary', 'get_statistics', 'is_ready', 'load_model', 'predict', 'predict_all', 'reset', 'save_model', 'start_training', 'train']
+Instantiate: OK
+
+=== AlertFilter ===
+Public methods: ['get_statistics', 'print_report', 'process', 'process_batch', 'reset_statistics']
+Instantiate: OK
+
+=== main.py C integration ===
+  NOT found: ml_anomaly
+  Found: attack_chain
+  Found: alert_filter
+  NOT found: MLAnomaly
+  Found: AttackChain
+  Found: AlertFilter

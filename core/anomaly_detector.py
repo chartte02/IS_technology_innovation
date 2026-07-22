@@ -638,7 +638,7 @@ class AnomalyDetector:
         self.adaptive.observe('high_frequency', pps)
         threshold = self.adaptive.get_threshold(
             'high_frequency', default=self.pps_threshold,
-            lower_bound=10,
+            lower_bound=100,  # floor: prevent false positives from normal browsing (5-50 pps)
         )
         if pps >= threshold:
             return {

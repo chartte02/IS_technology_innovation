@@ -1,0 +1,8 @@
+misuse_detector rules: 136
+alert_filter: True
+attack_chain: True
+ml_detector: True
+parsed: src=192.168.1.100 dst=192.168.1.1 port=80
+misuse_alerts before filter: 2
+misuse_alerts after filter: 0
+Final alerts: 0

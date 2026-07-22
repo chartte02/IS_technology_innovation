@@ -365,9 +365,9 @@ class IDSMainWindow(QMainWindow):
         alert_card_layout.addWidget(alert_title)
 
         self.table_recent = QTableWidget()
-        self.table_recent.setColumnCount(5)
+        self.table_recent.setColumnCount(6)
         self.table_recent.setHorizontalHeaderLabels(
-            ["Time", "Severity", "Type", "Source IP", "Description"])
+            ["Time", "Severity", "Source", "Type", "Source IP", "Description"])
         self.table_recent.horizontalHeader().setStretchLastSection(True)
         self.table_recent.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeToContents)
@@ -438,15 +438,30 @@ class IDSMainWindow(QMainWindow):
         self.lbl_hosts = QLabel("Hosts: 0")
         self.lbl_streams = QLabel("TCP: 0")
         self.lbl_ano = QLabel("Anomaly: 0")
+        self.lbl_ml = QLabel("ML: not trained")
         self.lbl_gen = QLabel("Demo: OFF")
+        # 基础标签循环
         for lbl in [self.lbl_pps, self.lbl_bps, self.lbl_conn,
-                     self.lbl_hosts, self.lbl_streams, self.lbl_ano, self.lbl_gen]:
+                     self.lbl_hosts, self.lbl_streams]:
             lbl.setStyleSheet("font-size: 15px; padding: 4px 10px; "
                             "background-color: " +
                             (LIGHT_THEME['alternateBase'] if self._current_theme == 'light'
                              else DARK_THEME['alternateBase']) +
                             "; border-radius: 4px;")
             stats_row.addWidget(lbl)
+        # C 模块标签 (醒目颜色区分)
+        self.lbl_ano.setStyleSheet(
+            "font-size: 15px; padding: 4px 12px; font-weight: bold; "
+            "color: #FFFFFF; background-color: #FF9500; border-radius: 4px;")
+        stats_row.addWidget(self.lbl_ano)
+        self.lbl_ml.setStyleSheet(
+            "font-size: 15px; padding: 4px 12px; font-weight: bold; "
+            "color: #FFFFFF; background-color: #AF52DE; border-radius: 4px;")
+        stats_row.addWidget(self.lbl_ml)
+        self.lbl_gen.setStyleSheet(
+            "font-size: 15px; padding: 4px 12px; font-weight: bold; "
+            "color: #FFFFFF; background-color: #34C759; border-radius: 4px;")
+        stats_row.addWidget(self.lbl_gen)
         stats_row.addStretch()
         traffic_layout.addLayout(stats_row)
 
@@ -1472,6 +1487,20 @@ class IDSMainWindow(QMainWindow):
                 self.lbl_hosts.setText("Hosts: 0")
                 self.lbl_ano.setText("Anomaly: 0")
 
+            # ML 检测器状态
+            if self.engine and self.engine.ml_detector:
+                ml_ready = self.engine.ml_detector.is_ready()
+                if ml_ready:
+                    ml_stats = self.engine.ml_detector.get_statistics()
+                    self.lbl_ml.setText(
+                        "ML: {0}/{1}".format(
+                            ml_stats.get('anomalies', 0),
+                            ml_stats.get('total_checked', 0)))
+                else:
+                    self.lbl_ml.setText("ML: not trained")
+            else:
+                self.lbl_ml.setText("ML: n/a")
+
             # Demo 模式生成器状态
             if gen is not None and gen._running:
                 self.lbl_gen.setText(
@@ -1512,20 +1541,26 @@ class IDSMainWindow(QMainWindow):
                                         time.localtime(alert.timestamp))))
                 self.table_recent.setItem(i, 1,
                     QTableWidgetItem(alert.severity))
+                # ★ Source 列: anomaly / misuse / tls / ml — 双引擎区分关键
                 self.table_recent.setItem(i, 2,
-                    QTableWidgetItem(alert.category))
+                    QTableWidgetItem(alert.source))
                 self.table_recent.setItem(i, 3,
-                    QTableWidgetItem(alert.src_ip))
+                    QTableWidgetItem(alert.category))
                 self.table_recent.setItem(i, 4,
+                    QTableWidgetItem(alert.src_ip))
+                self.table_recent.setItem(i, 5,
                     QTableWidgetItem(alert.description))
 
         except Exception:
             pass
 
-        # 每 5 秒刷新统计图表 + 告警表格
+        # 每 5 秒刷新统计图表 + 告警表格 + 攻击链
         if self._chart_time_counter % 5 == 0:
             self._refresh_statistics()
             if self.stack.currentIndex() == 1:
+                self._on_filter_alerts()
+            if self.stack.currentIndex() == 4:
+                self._refresh_attack_chain()
                 self._on_filter_alerts()
 
         # 每 10 秒刷新攻击链面板
@@ -1616,6 +1651,16 @@ class IDSMainWindow(QMainWindow):
         for ip, count in stats.get('top_attack_sources', [])[:10]:
             self.list_top_src.addItem(
                 "  {0}  —  {1} attacks".format(ip, count))
+
+        # 告警降噪统计 (C模块: AlertFilter)
+        if self.engine and self.engine.alert_filter:
+            fs = self.engine.alert_filter.get_statistics()
+            if fs.get('processed', 0) > 0:
+                self.lbl_chain_info.setText(
+                    "[Filter] {0} processed, {1} suppressed, {2} downgraded".format(
+                        fs.get('processed', 0),
+                        fs.get('suppressed', 0),
+                        fs.get('downgraded', 0)))
 
     def _populate_interfaces(self):
         """填充网络接口列表"""

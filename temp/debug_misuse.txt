@@ -1,0 +1,3 @@
+Alerts: 2
+  Suricata: SQL Injection - UNION SELECT (sev=high)
+  SQL Injection - UNION SELECT (sev=critical)

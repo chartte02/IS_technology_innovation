@@ -1,0 +1,36 @@
+=== 侧边栏 ===
+  [6] 
+
+=== Stack 页面 ===
+  [0] QScrollArea
+  [1] QWidget
+  [2] QWidget
+  [3] QWidget
+  [4] QWidget
+  [5] QWidget
+
+=== Dashboard 标签 ===
+  lbl_pps: exists=True text="PPS: 0"
+  lbl_bps: exists=True text="BPS: 0"
+  lbl_conn: exists=True text="Conn: 0"
+  lbl_hosts: exists=True text="Hosts: 0"
+  lbl_streams: exists=True text="TCP: 0"
+  lbl_ano: exists=True text="Anomaly: 0"
+  lbl_ml: exists=True text="ML: not trained"
+  lbl_gen: exists=True text="Demo: OFF"
+
+=== 控制栏按钮 ===
+  btn_start: exists=True text="▶  Start Detection"
+  btn_pause: exists=True text="⏸  Pause"
+  btn_learn: exists=True text="☁  Learn Baseline"
+  btn_replay: exists=True text="📂  Replay PCAP"
+  btn_demo: exists=True text="▶  Demo"
+
+=== 模块状态 ===
+  misuse_detector: 136 rules
+  alert_filter: DISABLED
+  attack_chain: ACTIVE
+  ml_detector: ACTIVE (ready=False)
+  anomaly_detector: ACTIVE
+
+=== Demo 10s 测试 ===

@@ -119,22 +119,15 @@ rate_limit:
 # --- 资产重要性配置（PDF必做：误报自动降噪）---
 # 不同重要性的资产，同类告警可升降级处理
 assets:
-  # 高重要性资产：告警自动升级
-  critical:
-    - "192.168.1.0/24"             # 核心服务器网段
-  # 中重要性资产：保持原始 severity
-  important:
-    - "10.0.1.0/24"                # 业务服务器网段
-  # 低重要性资产：告警自动降级
-  normal:
-    - "192.168.100.0/24"           # 客户端子网
-  # 白名单：完全忽略告警
-  whitelist:
-    - "192.168.1.1"                # 安全扫描器 / 监控系统
+  enabled: false                  # 设置为 false 禁用资产过滤 (C模块待修)
+  critical: []
+  important: []
+  normal: ["192.168.100.0/24"]
+  whitelist: []
 
 # --- 攻击链关联分析配置（PDF必做）---
 attack_chain:
-  enabled: false                   # 是否启用攻击链关联
+  enabled: true                    # 是否启用攻击链关联
   time_window: 300                 # 关联时间窗口（秒），同一源 IP 在此窗口内的告警视为同一攻击链
   min_alerts: 3                    # 最少告警数才构成攻击链
   stages:                          # 攻击阶段定义

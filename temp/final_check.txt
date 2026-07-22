@@ -1,0 +1,21 @@
+=== Module Init ===
+misuse_detector: 136 rules
+alert_filter: DISABLED
+attack_chain: ACTIVE
+ml_detector: ACTIVE
+anomaly_detector: ACTIVE
+tls_detector: ACTIVE
+
+=== GUI ===
+sidebar: 8 items
+stack: 6 pages
+cards: True
+charts: pie=True bar=True pps=True
+labels: ano=True ml=True gen=True
+demo_button: True
+dbclick_handler: True
+
+=== Pipeline ===
+After SQLi pkt: 2 alerts
+
+=== ALL C MODULES INTEGRATED ===

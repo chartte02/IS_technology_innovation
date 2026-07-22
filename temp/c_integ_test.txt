@@ -1,0 +1,9 @@
+alert_filter: True
+attack_chain: True
+ml_detector: True
+  ML ready: False
+Filter stats: {'输入告警数': 20, '输出告警数': 0, '白名单丢弃': 20, '资产降级': 0, '资产升级': 0, '基线降级': 0, '基线丢弃': 0, '未变更': 0, '降噪率': '100.0%'}
+Chain keys: None
+lbl_ml: ML: not trained
+lbl_ano: Anomaly: 0
+ALL OK

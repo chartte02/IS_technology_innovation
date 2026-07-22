@@ -1,0 +1,23 @@
+Demo started at 4pps
+
+=== 误用检测 (A) ===
+总告警: 30
+按类别: {'web_attack': 17, 'sql_injection': 6, 'xss': 6, 'webshell': 1}
+
+=== 异常检测 (C) ===
+主机数: 11 (需要>=10 ML才能训练)
+累计告警: 0
+处理包数: 21
+
+=== ML 检测 (C) ===
+ML ready: False
+
+=== 攻击链 (C) ===
+攻击链数: 0
+
+=== 演示总结 ===
+启动 GUI -> 点 Demo -> 等 8-10 秒
+Dashboard: Anomaly 标签显示异常告警数 (橙色)
+Dashboard: ML 标签显示模型状态 (紫色)
+Attack Chain tab: 多步攻击自动绘制 (侧边栏第5项)
+Alerts: 筛选 source=anomaly 看异常告警
